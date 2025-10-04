@@ -1,0 +1,15 @@
+﻿gcp_credentials/
+*.json
+st.secrets.toml
+.env
+*.parquet
+*.csv
+__pycache__/
+*.pyc
+.venv/
+venv/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
