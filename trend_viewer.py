@@ -9,20 +9,19 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# Matplotlib (stile "sonofacorner")
+# Matplotlib
 import matplotlib
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-from PIL import Image
+from cycler import cycler
 
 # ============== CONFIG GENERALE ==============
 st.set_page_config(page_title="Trend Deep-Dive", layout="wide")
 
-# Colori e font
-PAGE_BG   = "#F7F5F2"
-HEADER_BG = "#EFECE6"
-ROW_EVEN  = "#FBFAF7"
-GRID_COL  = "#C6C6C6"
+# --- Colori UI/Tabella ---
+PAGE_BG   = "#EFE9E6"   # richiesta: figure/axes facecolor = efe9e6
+HEADER_BG = "#E7E1DC"
+ROW_EVEN  = "#F7F2EF"
+GRID_COL  = "#C9C3BE"
 TEXT_COL  = "#1E1E1E"
 
 # Limiti tabella per evitare immagini enormi
@@ -31,33 +30,39 @@ FIG_MAX_W_IN     = 18
 FIG_MAX_H_IN     = 10
 FIG_DPI          = 110
 
-# ---------- CSS globale (pagina intera + font + spaziature ottimizzate) ----------
+# ---------- CSS globale (allineamento e spaziature) ----------
 st.markdown(
     f"""
     <style>
-    /* Forza Inter su tutto */
-    * {{
-        font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif !important;
-        color: {TEXT_COL};
-    }}
+    /* colore di sfondo coerente con i plot */
     html, body, [class*="stApp"] {{
         background-color: {PAGE_BG};
+        color: {TEXT_COL};
     }}
 
+    /* contenitore centrale più largo e con padding sinistro ridotto */
     .block-container {{
         max-width: 1600px;
-        padding-top: 0.6rem;  /* leggermente meno */
+        padding-top: 0.6rem;
+        padding-left: 1.0rem; /* allinea meglio i contenuti a sinistra */
+        padding-right: 1.0rem;
     }}
 
-    /* Compatta i margini sopra/sotto i titoli */
+    /* compattiamo i titoli */
     h1, h2, h3 {{
         margin-top: 0.2rem;
-        margin-bottom: 0.4rem;
+        margin-bottom: 0.5rem;
     }}
 
-    /* Avvicina la figura Matplotlib al sottotitolo */
+    /* avvicina la figura Matplotlib al sottotitolo */
     div[data-testid="stPyplot"] {{
-        margin-top: -10px;   /* regola qui se vuoi più/meno vicino */
+        margin-top: -8px;
+    }}
+
+    /* assicura che l'immagine della figura non sia centrata ma "a filo" a sinistra */
+    div[data-testid="stPyplot"] img {{
+        display: block;
+        margin-left: 0 !important;
     }}
     </style>
     """,
@@ -66,22 +71,18 @@ st.markdown(
 
 st.title("Trend Deep-Dive")
 
-# ============== FONT MATPLOTLIB ==============
-try:
-    font_dir = os.path.join(os.path.dirname(__file__), "fonts")
-    any_added = False
-    for fname in ["Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-Bold.ttf"]:
-        fpath = os.path.join(font_dir, fname)
-        if os.path.exists(fpath):
-            fm.fontManager.addfont(fpath)
-            any_added = True
-    matplotlib.rcParams["font.family"] = "Inter" if any_added else "DejaVu Sans"
-except Exception:
-    matplotlib.rcParams["font.family"] = "DejaVu Sans"
-
+# ============== STILE MATPLOTLIB (RICHIESTO) ==============
 matplotlib.rcParams.update({
-    "figure.facecolor": PAGE_BG,
-    "axes.facecolor": PAGE_BG,
+    "figure.facecolor": "#efe9e6",
+    "axes.facecolor":   "#efe9e6",
+    "axes.prop_cycle":  cycler(color=["#287271", "#495371"]),
+    "axes.spines.top":  False,
+    "axes.spines.right": False,
+    # dettagli utili (opzionali) per più pulizia
+    "axes.grid": True,
+    "grid.color": "#d7d2cd",
+    "grid.linewidth": 0.6,
+    "grid.alpha": 0.7,
 })
 
 # ============== SPLIT DATE ==============
@@ -90,7 +91,7 @@ def _parse_split(val):
         return None
     s = str(val).strip()
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
-        return pd.to_datetime(s).normalize()
+        return pd.to_datetime(s, format="%Y-%m-%d", errors="coerce").normalize()
     return pd.to_datetime(s, dayfirst=True, errors="coerce").normalize()
 
 def load_split_date():
@@ -189,15 +190,18 @@ tbl = tbl.fillna("")
 
 # ============== TABELLA MATPLOTLIB ==============
 def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = MAX_ROWS_DISPLAY):
-    """Disegna una tabella più leggibile: font più grande e righe più alte."""
+    """
+    Tabella leggibile e allineata: font più grande, righe più alte,
+    header bold, zebra rows e linee guida leggere.
+    """
     data = dataframe.head(max_rows)
     ncol, nrow = data.shape[1], data.shape[0]
 
-    # --- dimensioni figura: righe più alte + header più ampio ---
-    base_row_h = 0.36   # prima 0.28
-    header_h   = base_row_h * 1.25
-    fig_w = min(FIG_MAX_W_IN, 6 + 0.72 * ncol)
-    fig_h = min(FIG_MAX_H_IN, 0.8 + header_h + base_row_h * nrow)
+    # dimensioni figura calibrate su righe alte
+    base_row_h = 0.40   # (più alte) prima 0.28
+    header_h   = base_row_h * 1.30
+    fig_w = min(FIG_MAX_W_IN, 6 + 0.74 * ncol)
+    fig_h = min(FIG_MAX_H_IN, 0.7 + header_h + base_row_h * nrow)
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=FIG_DPI)
     fig.patch.set_facecolor(PAGE_BG)
@@ -216,10 +220,10 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = MAX_ROWS_DISPLAY):
         colColours=[HEADER_BG]*ncol
     )
 
-    # --- font tabella più grande + scala verticale per aumentare l'altezza righe ---
+    # font più grande + più spazio verticale tra le righe
     table.auto_set_font_size(False)
-    table.set_fontsize(11)      # prima 9
-    table.scale(1.0, 1.22)      # aumenta l'altezza delle righe
+    table.set_fontsize(12)   # caratteri più grandi
+    table.scale(1.0, 1.30)   # righe più alte
 
     y_under_header = None
     body_y = []
@@ -229,25 +233,28 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = MAX_ROWS_DISPLAY):
     }
 
     for (row, col), cell in table.get_celld().items():
+        # togli i bordi neri default per look più pulito
         cell.set_linewidth(0.0)
-        if row == 0:
+        if row == 0:  # header
             cell.get_text().set_color(TEXT_COL)
             cell.get_text().set_fontweight('bold')
             y_under_header = cell.xy[1]
         else:
+            # zebra
             if row % 2 == 0:
                 cell.set_facecolor(ROW_EVEN)
             if col == 0:
                 body_y.append(cell.xy[1])
-        if col_labels[col] in numeric_cols:
+        # numerici allineati a destra
+        if col < len(col_labels) and col_labels[col] in numeric_cols:
             cell._text.set_ha('right')
 
-    # linee guida orizzontali
+    # linee guida orizzontali molto leggere
     try:
         if y_under_header is not None:
             ax.hlines(y_under_header, xmin=0, xmax=1, colors=GRID_COL, linewidth=1.0)
         for y in sorted(set(body_y), reverse=True):
-            ax.hlines(y, xmin=0, xmax=1, colors=GRID_COL, linewidth=0.8, linestyles=(0,(3,3)))
+            ax.hlines(y, xmin=0, xmax=1, colors=GRID_COL, linewidth=0.7, linestyles=(0,(3,3)))
     except Exception:
         pass
 
@@ -256,7 +263,8 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = MAX_ROWS_DISPLAY):
 
 st.subheader("Partite (dopo split_date)")
 fig_table = draw_mpl_table(tbl)
-st.pyplot(fig_table, width='content')
+# usa tutta la larghezza della colonna e resta a sinistra
+st.pyplot(fig_table, use_container_width=True)
 
 # ============== NETPROFIT CUMULATO ==============
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
@@ -273,5 +281,5 @@ by_day["Cum_NetProfit2"] = by_day["NetProfit2"].cumsum()
 st.subheader("NetProfit cumulato")
 st.line_chart(
     by_day.set_index("Date")[["Cum_NetProfit1","Cum_NetProfit2"]],
-    width='stretch'
+    use_container_width=True
 )
