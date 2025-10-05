@@ -155,16 +155,16 @@ for c in ["p_t","mu_t","P>2.5"]:
         if c != "P>2.5" and v.dropna().between(0,1).all():
             tbl[c] = (v*100).round(1).astype(str) + "%"
         else:
-            tbl[c] = v  # lascio numerico per eventuale uso successivo
+            tbl[c] = v  # lascio numerico
 
 # ---- Rounding e visualizzazione ----
-# 1) Colonne "plain" → converto a numerico, round(2) e poi STRINGA formattata (così Streamlit mostra sempre 2 decimali)
+# 1) Colonne "plain" → numerico + round(2) → STRINGA "xx.yy"
 for c in ["FAV_odds", "P>2.5", "Odds1", "Odds2"]:
     if c in tbl.columns:
         s = pd.to_numeric(tbl[c], errors="coerce").round(2)
         tbl[c] = s.map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
 
-# 2) NetProfit* restano NUMERICI (servono per le barre), ma già arrotondati a 2 decimali
+# 2) NetProfit* restano NUMERICI (servono per le barre), arrotondati a 2 decimali
 for c in ["NetProfit1","NetProfit2"]:
     if c in tbl.columns:
         tbl[c] = pd.to_numeric(tbl[c], errors="coerce").round(2)
@@ -185,7 +185,7 @@ order = [c for c in ["Date","Time","HomeTeam","AwayTeam","FT","PT","FAV_odds","P
 tbl = tbl[order]
 
 # ============== STYLER ==============
-numeric_right = [c for c in ["FAV_odds","Odds1","Odds2"] if c in tbl.columns]  # ora sono stringhe, ma le allineo cmq
+numeric_right = [c for c in ["FAV_odds","Odds1","Odds2"] if c in tbl.columns]
 
 def style_bet(s):
     out=[]
@@ -229,7 +229,7 @@ for bet_col in ["Bet1","Bet2"]:
     if bet_col in tbl.columns:
         styler = styler.apply(style_bet, subset=[bet_col])
 
-# Barre centrate su 0 + allineamento numero lato giusto + formato 2 decimali (solo sui NetProfit numerici)
+# Barre centrate su 0 + allineamento numero lato giusto + format 2 decimali
 for np_col in ["NetProfit1","NetProfit2"]:
     if np_col in tbl.columns:
         v = tbl[np_col]
@@ -239,6 +239,13 @@ for np_col in ["NetProfit1","NetProfit2"]:
                        color=["#c0392b", "#2e7d32"], vmin=-rng, vmax=rng)
                   .apply(align_profit, subset=[np_col])
                   .format({np_col: "{:.2f}"}))
+
+# >>> Forzatura finale: garantisco due decimali su ENTRAMBI i NetProfit <<<
+fmt_final = {}
+if "NetProfit1" in tbl.columns: fmt_final["NetProfit1"] = "{:.2f}"
+if "NetProfit2" in tbl.columns: fmt_final["NetProfit2"] = "{:.2f}"
+if fmt_final:
+    styler = styler.format(fmt_final)
 
 # ====== RENDER ======
 st.subheader("Partite (dopo split_date)")
@@ -266,4 +273,3 @@ chart = (alt.Chart(chart_df, background=PAGE_BG).mark_line().encode(
 
 st.subheader("NetProfit cumulato")
 st.altair_chart(chart, use_container_width=True)
-
