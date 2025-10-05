@@ -1,4 +1,5 @@
-# trend_viewer.py
+# trend_viewer.py — versione pulita e stabile (senza font custom)
+
 import os
 import io
 import re
@@ -10,28 +11,26 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# Matplotlib (tabella stile "sonofacorner")
+# Matplotlib per tabella stile "sonofacorner"
 import matplotlib
 import matplotlib.pyplot as plt
 
-# ============== IMPOSTAZIONI STREAMLIT ==============
+# =================== IMPOSTAZIONI STREAMLIT ===================
 st.set_page_config(page_title="Trend Deep-Dive", layout="wide")
 
-# Palette stile tabelle sonofacorner
 PAGE_BG   = "#F7F5F2"   # beige chiaro
 HEADER_BG = "#EFECE6"   # header tabella
 ROW_EVEN  = "#FBFAF7"   # zebra rows
 GRID_COL  = "#C6C6C6"   # linee orizzontali
 TEXT_COL  = "#1E1E1E"
 
-# CSS globale (pagina intera)
+# CSS globale pagina
 st.markdown(
     f"""
     <style>
     html, body, [class*="stApp"] {{
         background-color: {PAGE_BG};
         color: {TEXT_COL};
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
     }}
     .block-container {{ max-width: 1600px; padding-top: 1rem; }}
     </style>
@@ -39,7 +38,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Matplotlib: colori di sfondo coerenti con la pagina
+# Matplotlib: stesso sfondo della pagina
 matplotlib.rcParams.update({
     "figure.facecolor": PAGE_BG,
     "axes.facecolor": PAGE_BG,
@@ -47,7 +46,7 @@ matplotlib.rcParams.update({
 
 st.title("Trend Deep-Dive")
 
-# ============== SPLIT DATE (URL -> config.yaml -> default) ==============
+# =================== SPLIT DATE (URL -> config.yaml -> default) ===================
 def _parse_split(val):
     if val is None:
         return None
@@ -61,7 +60,7 @@ def load_split_date():
     dt = _parse_split(st.query_params.get("split"))
     if dt is not None:
         return dt
-    # 2) config.yaml accanto al file (se presente)
+    # 2) config.yaml accanto al file
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     try:
         import yaml
@@ -78,16 +77,16 @@ def load_split_date():
 
 SPLIT_DATE = load_split_date()
 
-# ============== PARAMETRI URL (trend) ==============
+# =================== PARAMETRI URL (trend) ===================
 trend = st.query_params.get("trend")
 if not trend:
     st.warning("⚠️ Nessun trend passato nell’URL. Usa ?trend=CODICE_TREND.")
     st.stop()
-base_trend = trend[:-1]  # su Drive il parquet è senza l'ultima cifra
 
+base_trend = trend[:-1]  # parquet è senza l'ultima cifra
 st.caption(f"Trend selezionato: **{trend}** • Split date: **{SPLIT_DATE.date()}**")
 
-# ============== GOOGLE DRIVE (service account) ==============
+# =================== GOOGLE DRIVE (service account) ===================
 try:
     creds = service_account.Credentials.from_service_account_info(
         st.secrets["google_service_account"],
@@ -99,11 +98,12 @@ except KeyError:
 
 drive = build("drive", "v3", credentials=creds)
 
-# ============== DOWNLOAD PARQUET ==============
+# =================== DOWNLOAD PARQUET ===================
 resp = drive.files().list(
     q=f"name='{base_trend}.parquet'",
     fields="files(id,name)",
 ).execute()
+
 files = resp.get("files", [])
 if not files:
     st.error(f"Nessun file **{base_trend}.parquet** trovato su Drive.")
@@ -119,7 +119,7 @@ buf.seek(0)
 
 df = pd.read_parquet(buf)
 
-# ============== DATE/TIME + FILTRO ==============
+# =================== DATE/TIME + FILTRO ===================
 date_str = df.get("Date", pd.Series("", index=df.index)).astype(str).fillna("")
 time_str = df.get("Time", pd.Series("", index=df.index)).astype(str).fillna("")
 dt = pd.to_datetime((date_str + " " + time_str).str.strip(), dayfirst=True, errors="coerce")
@@ -131,7 +131,7 @@ if df.empty:
     st.info("Nessun evento dopo la split_date.")
     st.stop()
 
-# ============== PREPARA TABELLA (NO HTML) ==============
+# =================== PREPARA TABELLA ===================
 wanted = [
     "Date","Time","HomeTeam","AwayTeam","FAV_odds","P>2.5",
     "FAV_goal","SFAV_goal","FAV_goal_1T","SFAV_goal_1T",
@@ -157,12 +157,12 @@ for c in ["FAV_odds","Odds1","Odds2","NetProfit1","NetProfit2"]:
 
 tbl = tbl.fillna("")
 
-# ============== TABELLA MATPLOTLIB (solo orizzontali) ==============
+# =================== TABELLA MATPLOTLIB (solo linee orizzontali) ===================
 def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = 150):
     data = dataframe.head(max_rows)
     ncol, nrow = data.shape[1], data.shape[0]
 
-    # dimensioni dinamiche (Streamlit farà stretch)
+    # dimensioni dinamiche
     fig_w = min(24, 6 + 0.9 * ncol)
     base_row_h = 0.34
     header_h   = base_row_h * 1.1
@@ -199,7 +199,7 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = 150):
 
     # Stile celle + raccolta Y per disegnare linee orizzontali
     for (row, col), cell in table.get_celld().items():
-        # niente bordi delle celle (evita verticali)
+        # niente bordi delle celle (così evitiamo verticali)
         cell.set_linewidth(0.0)
 
         if row == 0:
@@ -232,10 +232,10 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = 150):
 
 st.subheader("Partite (dopo split_date)")
 fig_table = draw_mpl_table(tbl)
-# NB: st.pyplot NON supporta width="stretch", quindi uso use_container_width
-st.pyplot(fig_table, use_container_width=True)
+# Streamlit >=1.50: preferire width='stretch'
+st.pyplot(fig_table, width='stretch')
 
-# ============== NETPROFIT CUMULATO (interattivo) ==============
+# =================== NETPROFIT CUMULATO (interattivo) ===================
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
 np2 = pd.to_numeric(df.get("NetProfit2", 0), errors="coerce").fillna(0.0)
 
@@ -248,8 +248,7 @@ by_day["Cum_NetProfit1"] = by_day["NetProfit1"].cumsum()
 by_day["Cum_NetProfit2"] = by_day["NetProfit2"].cumsum()
 
 st.subheader("NetProfit cumulato")
-# Per i chart recenti width='stretch' è ok; in alternativa: use_container_width=True
 st.line_chart(
     by_day.set_index("Date")[["Cum_NetProfit1","Cum_NetProfit2"]],
-    width="stretch"
+    width='stretch'
 )
