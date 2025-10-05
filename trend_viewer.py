@@ -1,106 +1,4 @@
 # trend_viewer.py
-
-# ============== FONT & CSS GLOBALI (usa i .ttf locali) ==============
-from base64 import b64encode
-
-PAGE_BG   = "#F7F5F2"   # beige chiaro
-HEADER_BG = "#EFECE6"
-ROW_EVEN  = "#FBFAF7"
-GRID_COL  = "#C6C6C6"
-TEXT_COL  = "#1E1E1E"
-
-# 1) registra i TTF per Matplotlib e scopri il "family name" reale
-font_dir = os.path.join(os.path.dirname(__file__), "fonts")
-ttf_candidates = [
-    "Inter-Regular.ttf",  # se hai rinominato i file così
-    "Inter-Medium.ttf",
-    "Inter-Bold.ttf",
-    # nomi alternativi (se non hai .ttf con i nomi sopra, lasciali pure)
-    "Inter_18pt-Regular.ttf",
-    "Inter_18pt-Medium.ttf",
-    "Inter_18pt-Bold.ttf",
-]
-
-found_ttf = []
-for fname in ttf_candidates:
-    fpath = os.path.join(font_dir, fname)
-    if os.path.exists(fpath):
-        try:
-            fm.fontManager.addfont(fpath)
-            found_ttf.append(fpath)
-        except Exception:
-            pass
-
-# family name da usare in Matplotlib (leggo da un .ttf reale)
-mpl_family = None
-for fpath in found_ttf:
-    try:
-        fam = fm.FontProperties(fname=fpath).get_name()
-        if fam:  # prendo il primo valido
-            mpl_family = fam
-            break
-    except Exception:
-        pass
-
-if mpl_family:
-    matplotlib.rcParams["font.family"] = mpl_family
-else:
-    matplotlib.rcParams["font.family"] = "DejaVu Sans"
-
-matplotlib.rcParams.update({
-    "figure.facecolor": PAGE_BG,
-    "axes.facecolor": PAGE_BG,
-})
-
-# 2) inietto @font-face in CSS (base64) così TUTTA la pagina usa Inter
-def _read_bytes(p):
-    with open(p, "rb") as f:
-        return f.read()
-
-css_faces = []
-# mappa: (path parziale da trovare, peso CSS, stile)
-css_plan = [
-    (("Inter-Regular.ttf","Inter_18pt-Regular.ttf"), 400, "normal"),
-    (("Inter-Medium.ttf","Inter_18pt-Medium.ttf"),   500, "normal"),
-    (("Inter-Bold.ttf","Inter_18pt-Bold.ttf"),       700, "normal"),
-]
-
-for names, weight, style in css_plan:
-    real = None
-    for n in names:
-        p = os.path.join(font_dir, n)
-        if os.path.exists(p):
-            real = p
-            break
-    if not real:
-        continue
-    raw = _read_bytes(real)
-    uri = "data:font/ttf;base64," + b64encode(raw).decode("ascii")
-    css_faces.append(
-        f"""@font-face {{
-              font-family: 'Inter';
-              src: url('{uri}') format('truetype');
-              font-weight: {weight};
-              font-style: {style};
-              font-display: swap;
-           }}"""
-    )
-
-st.markdown(
-    f"""
-    <style>
-    {'\n'.join(css_faces)}
-    html, body, [class*="stApp"] {{
-        background-color: {PAGE_BG};
-        color: {TEXT_COL};
-        font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, sans-serif;
-    }}
-    .block-container {{ max-width: 1600px; padding-top: 1rem; }}
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
 import os
 import io
 import re
@@ -115,62 +13,46 @@ from googleapiclient.http import MediaIoBaseDownload
 # Matplotlib (tabella stile "sonofacorner")
 import matplotlib
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 
 # ============== IMPOSTAZIONI STREAMLIT ==============
 st.set_page_config(page_title="Trend Deep-Dive", layout="wide")
 
+# Palette stile tabelle sonofacorner
 PAGE_BG   = "#F7F5F2"   # beige chiaro
 HEADER_BG = "#EFECE6"   # header tabella
 ROW_EVEN  = "#FBFAF7"   # zebra rows
 GRID_COL  = "#C6C6C6"   # linee orizzontali
 TEXT_COL  = "#1E1E1E"
 
-# CSS globale (pagina intera + fallback font Inter lato HTML)
+# CSS globale (pagina intera)
 st.markdown(
     f"""
     <style>
     html, body, [class*="stApp"] {{
         background-color: {PAGE_BG};
         color: {TEXT_COL};
-        font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
     }}
-    /* contenitore più largo */
     .block-container {{ max-width: 1600px; padding-top: 1rem; }}
     </style>
     """,
     unsafe_allow_html=True
 )
 
-st.title("Trend Deep-Dive")
-
-# ============== FONT MATPLOTLIB (Inter se presente) ==============
-try:
-    font_dir = os.path.join(os.path.dirname(__file__), "fonts")
-    any_added = False
-    for fname in ["Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-Bold.ttf"]:
-        fpath = os.path.join(font_dir, fname)
-        if os.path.exists(fpath):
-            fm.fontManager.addfont(fpath)
-            any_added = True
-    if any_added:
-        matplotlib.rcParams["font.family"] = "Inter"
-    else:
-        matplotlib.rcParams["font.family"] = "DejaVu Sans"
-except Exception:
-    matplotlib.rcParams["font.family"] = "DejaVu Sans"
-
+# Matplotlib: colori di sfondo coerenti con la pagina
 matplotlib.rcParams.update({
     "figure.facecolor": PAGE_BG,
     "axes.facecolor": PAGE_BG,
 })
+
+st.title("Trend Deep-Dive")
 
 # ============== SPLIT DATE (URL -> config.yaml -> default) ==============
 def _parse_split(val):
     if val is None:
         return None
     s = str(val).strip()
-    if re.fullmatch(r"\d{{4}}-\d{{2}}-\d{{2}}", s):
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
         return pd.to_datetime(s).normalize()
     return pd.to_datetime(s, dayfirst=True, errors="coerce").normalize()
 
@@ -179,7 +61,7 @@ def load_split_date():
     dt = _parse_split(st.query_params.get("split"))
     if dt is not None:
         return dt
-    # 2) config.yaml accanto al file
+    # 2) config.yaml accanto al file (se presente)
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     try:
         import yaml
@@ -201,8 +83,7 @@ trend = st.query_params.get("trend")
 if not trend:
     st.warning("⚠️ Nessun trend passato nell’URL. Usa ?trend=CODICE_TREND.")
     st.stop()
-
-base_trend = trend[:-1]  # parquet è senza l'ultima cifra
+base_trend = trend[:-1]  # su Drive il parquet è senza l'ultima cifra
 
 st.caption(f"Trend selezionato: **{trend}** • Split date: **{SPLIT_DATE.date()}**")
 
@@ -223,7 +104,6 @@ resp = drive.files().list(
     q=f"name='{base_trend}.parquet'",
     fields="files(id,name)",
 ).execute()
-
 files = resp.get("files", [])
 if not files:
     st.error(f"Nessun file **{base_trend}.parquet** trovato su Drive.")
@@ -352,7 +232,8 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = 150):
 
 st.subheader("Partite (dopo split_date)")
 fig_table = draw_mpl_table(tbl)
-st.pyplot(fig_table, use_container_width=True) # nuovo parametro (sostituisce use_container_width)
+# NB: st.pyplot NON supporta width="stretch", quindi uso use_container_width
+st.pyplot(fig_table, use_container_width=True)
 
 # ============== NETPROFIT CUMULATO (interattivo) ==============
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
@@ -367,7 +248,8 @@ by_day["Cum_NetProfit1"] = by_day["NetProfit1"].cumsum()
 by_day["Cum_NetProfit2"] = by_day["NetProfit2"].cumsum()
 
 st.subheader("NetProfit cumulato")
+# Per i chart recenti width='stretch' è ok; in alternativa: use_container_width=True
 st.line_chart(
     by_day.set_index("Date")[["Cum_NetProfit1","Cum_NetProfit2"]],
-    width="stretch"  # nuovo parametro
+    width="stretch"
 )
