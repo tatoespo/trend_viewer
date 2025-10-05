@@ -31,16 +31,34 @@ FIG_MAX_W_IN     = 18
 FIG_MAX_H_IN     = 10
 FIG_DPI          = 110
 
-# CSS globale (pagina intera + font)
+# ---------- CSS globale (pagina intera + font + spaziature ottimizzate) ----------
 st.markdown(
     f"""
     <style>
+    /* Forza Inter su tutto */
+    * {{
+        font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif !important;
+        color: {TEXT_COL};
+    }}
     html, body, [class*="stApp"] {{
         background-color: {PAGE_BG};
-        color: {TEXT_COL};
-        font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
     }}
-    .block-container {{ max-width: 1600px; padding-top: 1rem; }}
+
+    .block-container {{
+        max-width: 1600px;
+        padding-top: 0.6rem;  /* leggermente meno */
+    }}
+
+    /* Compatta i margini sopra/sotto i titoli */
+    h1, h2, h3 {{
+        margin-top: 0.2rem;
+        margin-bottom: 0.4rem;
+    }}
+
+    /* Avvicina la figura Matplotlib al sottotitolo */
+    div[data-testid="stPyplot"] {{
+        margin-top: -10px;   /* regola qui se vuoi più/meno vicino */
+    }}
     </style>
     """,
     unsafe_allow_html=True
@@ -171,13 +189,15 @@ tbl = tbl.fillna("")
 
 # ============== TABELLA MATPLOTLIB ==============
 def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = MAX_ROWS_DISPLAY):
+    """Disegna una tabella più leggibile: font più grande e righe più alte."""
     data = dataframe.head(max_rows)
     ncol, nrow = data.shape[1], data.shape[0]
 
-    fig_w = min(FIG_MAX_W_IN, 6 + 0.7 * ncol)
-    base_row_h = 0.28
-    header_h   = base_row_h * 1.1
-    fig_h = min(FIG_MAX_H_IN, 1.0 + header_h + base_row_h * nrow)
+    # --- dimensioni figura: righe più alte + header più ampio ---
+    base_row_h = 0.36   # prima 0.28
+    header_h   = base_row_h * 1.25
+    fig_w = min(FIG_MAX_W_IN, 6 + 0.72 * ncol)
+    fig_h = min(FIG_MAX_H_IN, 0.8 + header_h + base_row_h * nrow)
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=FIG_DPI)
     fig.patch.set_facecolor(PAGE_BG)
@@ -195,8 +215,11 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = MAX_ROWS_DISPLAY):
         loc='upper left',
         colColours=[HEADER_BG]*ncol
     )
+
+    # --- font tabella più grande + scala verticale per aumentare l'altezza righe ---
     table.auto_set_font_size(False)
-    table.set_fontsize(9)
+    table.set_fontsize(11)      # prima 9
+    table.scale(1.0, 1.22)      # aumenta l'altezza delle righe
 
     y_under_header = None
     body_y = []
@@ -219,6 +242,7 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = MAX_ROWS_DISPLAY):
         if col_labels[col] in numeric_cols:
             cell._text.set_ha('right')
 
+    # linee guida orizzontali
     try:
         if y_under_header is not None:
             ax.hlines(y_under_header, xmin=0, xmax=1, colors=GRID_COL, linewidth=1.0)
