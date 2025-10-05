@@ -148,20 +148,26 @@ if {"FAV_goal_1T","SFAV_goal_1T"}.issubset(tbl.columns):
     tbl["PT"] = tbl["FAV_goal_1T"].astype("Int64").astype(str) + "-" + tbl["SFAV_goal_1T"].astype("Int64").astype(str)
     tbl.drop(columns=["FAV_goal_1T","SFAV_goal_1T"], inplace=True, errors="ignore")
 
-# Percentuali
+# Percentuali (p_t, mu_t in %) — P>2.5 resta a 2 decimali, non in %
 for c in ["p_t","mu_t","P>2.5"]:
     if c in tbl.columns:
         v = pd.to_numeric(tbl[c], errors="coerce")
-        # se è probabilità (0-1) → percentuale
-        if v.dropna().between(0,1).all() and c != "P>2.5":  # P>2.5 va arrotondata a 2 decimali, non in %
+        if c != "P>2.5" and v.dropna().between(0,1).all():
             tbl[c] = (v*100).round(1).astype(str) + "%"
+        else:
+            tbl[c] = v  # lascio numerico per eventuale uso successivo
 
-# Rende numerici + rounding dove richiesto
-if "FAV_odds" in tbl.columns:  tbl["FAV_odds"] = pd.to_numeric(tbl["FAV_odds"], errors="coerce").round(2)
-if "P>2.5"   in tbl.columns:  tbl["P>2.5"]   = pd.to_numeric(tbl["P>2.5"], errors="coerce").round(2)
-if "Odds1"   in tbl.columns:  tbl["Odds1"]   = pd.to_numeric(tbl["Odds1"], errors="coerce").round(2)
+# ---- Rounding e visualizzazione ----
+# 1) Colonne "plain" → converto a numerico, round(2) e poi STRINGA formattata (così Streamlit mostra sempre 2 decimali)
+for c in ["FAV_odds", "P>2.5", "Odds1", "Odds2"]:
+    if c in tbl.columns:
+        s = pd.to_numeric(tbl[c], errors="coerce").round(2)
+        tbl[c] = s.map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
+
+# 2) NetProfit* restano NUMERICI (servono per le barre), ma già arrotondati a 2 decimali
 for c in ["NetProfit1","NetProfit2"]:
-    if c in tbl.columns: tbl[c] = pd.to_numeric(tbl[c], errors="coerce")
+    if c in tbl.columns:
+        tbl[c] = pd.to_numeric(tbl[c], errors="coerce").round(2)
 
 # Bet icone
 def bet_icon(v):
@@ -178,8 +184,8 @@ order = [c for c in ["Date","Time","HomeTeam","AwayTeam","FT","PT","FAV_odds","P
                      "Bet1","Odds1","NetProfit1","Bet2","Odds2","NetProfit2"] if c in tbl.columns]
 tbl = tbl[order]
 
-# ============== STYLER (bordi orizzontali, barre + label lato giusto, index nascosto) ==============
-numeric_right = [c for c in ["FAV_odds","Odds1","Odds2"] if c in tbl.columns]
+# ============== STYLER ==============
+numeric_right = [c for c in ["FAV_odds","Odds1","Odds2"] if c in tbl.columns]  # ora sono stringhe, ma le allineo cmq
 
 def style_bet(s):
     out=[]
@@ -189,7 +195,6 @@ def style_bet(s):
         else: out.append("color:#b68b00;font-weight:700")
     return out
 
-# allinea numero a sinistra se negativo, a destra se positivo
 def align_profit(s):
     styles=[]
     for x in s:
@@ -200,18 +205,21 @@ def align_profit(s):
     return styles
 
 base_styles = [
-    {"selector":"table", "props":[("background-color", PAGE_BG), ("color", TEXT_COL), ("border-collapse","separate"), ("border-spacing","0")]},
+    {"selector":"table", "props":[("background-color", PAGE_BG), ("color", TEXT_COL),
+                                  ("border-collapse","separate"), ("border-spacing","0")]},
     {"selector":"thead th", "props":[("background-color", PAGE_BG), ("color", TEXT_COL),
                                      ("border-top", f"2px solid {TEXT_COL}"), ("border-bottom", f"2px solid {TEXT_COL}"),
-                                     ("border-left","0"), ("border-right","0"), ("font-weight","700"), ("padding","8px 6px")]},
+                                     ("border-left","0"), ("border-right","0"), ("font-weight","700"),
+                                     ("padding","8px 6px")]},
     {"selector":"tbody td", "props":[("border-top", f"1px solid {GRID_COL}"), ("border-bottom", f"1px solid {GRID_COL}"),
-                                     ("border-left","0"), ("border-right","0"), ("background-color", PAGE_BG), ("padding","10px 6px")]},
+                                     ("border-left","0"), ("border-right","0"),
+                                     ("background-color", PAGE_BG), ("padding","10px 6px")]},
 ]
 
 styler = (tbl.style
           .set_table_styles(base_styles)
           .set_properties(**{"text-align":"left"})
-          .hide(axis="index")  # <-- niente indice
+          .hide(axis="index")
          )
 
 if numeric_right:
@@ -221,21 +229,16 @@ for bet_col in ["Bet1","Bet2"]:
     if bet_col in tbl.columns:
         styler = styler.apply(style_bet, subset=[bet_col])
 
-# barre centered + formato 2 decimali + allineamento numero lato giusto
+# Barre centrate su 0 + allineamento numero lato giusto + formato 2 decimali (solo sui NetProfit numerici)
 for np_col in ["NetProfit1","NetProfit2"]:
     if np_col in tbl.columns:
         v = tbl[np_col]
-        rng = max(abs(v.min(skipna=True)), abs(v.max(skipna=True)))
+        rng = float(max(abs(v.min(skipna=True)), abs(v.max(skipna=True))) or 1.0)
         styler = (styler
                   .bar(subset=[np_col], align="mid",
                        color=["#c0392b", "#2e7d32"], vmin=-rng, vmax=rng)
                   .apply(align_profit, subset=[np_col])
                   .format({np_col: "{:.2f}"}))
-
-# rounding a 2 decimali per le colonne richieste
-fmt_cols = {c: "{:.2f}" for c in ["FAV_odds","P>2.5","Odds1","NetProfit1"] if c in tbl.columns}
-if fmt_cols:
-    styler = styler.format(fmt_cols)
 
 # ====== RENDER ======
 st.subheader("Partite (dopo split_date)")
@@ -263,3 +266,4 @@ chart = (alt.Chart(chart_df, background=PAGE_BG).mark_line().encode(
 
 st.subheader("NetProfit cumulato")
 st.altair_chart(chart, use_container_width=True)
+
