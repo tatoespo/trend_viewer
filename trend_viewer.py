@@ -219,7 +219,7 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = 150):
 
 st.subheader("Partite (dopo split_date)")
 fig_table = draw_mpl_table(tbl)
-st.pyplot(fig_table, width="stretch")  # API nuova
+st.pyplot(fig_table, use_container_width=True) 
 
 # ────────────────────────── NETPROFIT CUMULATO ──────────────────────────
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
@@ -234,4 +234,4 @@ by_day["Cum_NetProfit1"] = by_day["NetProfit1"].cumsum()
 by_day["Cum_NetProfit2"] = by_day["NetProfit2"].cumsum()
 
 st.subheader("NetProfit cumulato")
-st.line_chart(by_day.set_index("Date")[["Cum_NetProfit1", "Cum_NetProfit2"]], width="stretch")
+st.line_chart(by_day.set_index("Date")[["Cum_NetProfit1","Cum_NetProfit2"]], use_container_width=True)
