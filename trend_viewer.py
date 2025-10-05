@@ -5,12 +5,11 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
-# Google Drive API
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# ===================== CONFIG =====================
+# ============== CONFIG ==============
 st.set_page_config(page_title="Trend Deep-Dive", layout="wide")
 
 PAGE_BG   = "#EFE9E6"
@@ -18,7 +17,6 @@ TEXT_COL  = "#1E1E1E"
 GRID_COL  = "#d7d2cd"
 LINE_COLS = ["#287271", "#495371"]
 
-# ---------- CSS pagina + stile tabella ----------
 st.markdown(
     f"""
     <style>
@@ -26,49 +24,25 @@ st.markdown(
         background-color: {PAGE_BG};
         color: {TEXT_COL};
     }}
-    .block-container {{
-        max-width: 1600px;
-        padding-top: 0.6rem;
-        padding-left: 1.0rem;
-        padding-right: 1.0rem;
-    }}
-    h1, h2, h3 {{
-        margin-top: 0.2rem;
-        margin-bottom: 0.6rem;
-    }}
+    .block-container {{ max-width: 1600px; padding: .6rem 1rem; }}
+    h1, h2, h3 {{ margin-top:.2rem; margin-bottom:.6rem; }}
 
-    /* container della tabella HTML */
+    /* contenitore della tabella HTML */
     .styled-table table {{
-        width: 100%;
-        font-size: 16px;
-        border-collapse: separate;
-        border-spacing: 0;
-        background-color: {PAGE_BG};
-        color: {TEXT_COL};
+        width: 100%; font-size: 16px; border-collapse: separate; border-spacing: 0;
+        background-color: {PAGE_BG}; color:{TEXT_COL};
     }}
     .styled-table thead th {{
-        background-color: {PAGE_BG};
-        color: {TEXT_COL};
-        border-top: 2px solid {TEXT_COL};
-        border-bottom: 2px solid {TEXT_COL};
-        border-left: 0;
-        border-right: 0;
-        font-weight: 700;
-        padding: 8px 6px;
+        background-color:{PAGE_BG}; color:{TEXT_COL};
+        border-top:2px solid {TEXT_COL}; border-bottom:2px solid {TEXT_COL};
+        border-left:0; border-right:0; font-weight:700; padding:8px 6px;
     }}
     .styled-table tbody td {{
-        background-color: {PAGE_BG};
-        border-top: 1px solid {GRID_COL};
-        border-bottom: 1px solid {GRID_COL};
-        border-left: 0;
-        border-right: 0;
-        padding: 10px 6px;   /* altezza riga maggiore */
+        background-color:{PAGE_BG};
+        border-top:1px solid {GRID_COL}; border-bottom:1px solid {GRID_COL};
+        border-left:0; border-right:0; padding:10px 6px;
     }}
-
-    /* allinea elementi ai margini */
-    .styled-table, div[data-testid="stVegaLiteChart"] > div {{
-        margin-left: 0 !important;
-    }}
+    .styled-table, div[data-testid="stVegaLiteChart"]>div {{ margin-left:0!important; }}
     </style>
     """,
     unsafe_allow_html=True
@@ -76,10 +50,9 @@ st.markdown(
 
 st.title("Trend Deep-Dive")
 
-# ===================== SPLIT DATE =====================
+# ============== DATE HELPERS ==============
 def _parse_split(val):
-    if val is None:
-        return None
+    if val is None: return None
     s = str(val).strip()
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
         return pd.to_datetime(s, format="%Y-%m-%d", errors="coerce").normalize()
@@ -87,8 +60,7 @@ def _parse_split(val):
 
 def load_split_date():
     dt = _parse_split(st.query_params.get("split"))
-    if dt is not None:
-        return dt
+    if dt is not None: return dt
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     try:
         import yaml
@@ -96,41 +68,32 @@ def load_split_date():
             with open(cfg_path, "r", encoding="utf-8") as f:
                 y = yaml.safe_load(f) or {}
                 dt = _parse_split(y.get("split_date"))
-                if dt is not None:
-                    return dt
+                if dt is not None: return dt
     except Exception:
         pass
     return pd.Timestamp(2022, 8, 1)
 
 SPLIT_DATE = load_split_date()
 
-# ===================== PARAMETRI URL =====================
+# ============== URL PARAMS ==============
 trend = st.query_params.get("trend")
 if not trend:
     st.warning("⚠️ Nessun trend passato nell’URL. Usa ?trend=CODICE_TREND.")
     st.stop()
-
 base_trend = trend[:-1]
 st.caption(f"Trend selezionato: **{trend}** • Split date: **{SPLIT_DATE.date()}**")
 
-# ===================== GOOGLE DRIVE =====================
+# ============== DRIVE ==============
 try:
     creds = service_account.Credentials.from_service_account_info(
         st.secrets["google_service_account"],
-        scopes=["https://www.googleapis.com/auth/drive.readonly"],
-    )
+        scopes=["https://www.googleapis.com/auth/drive.readonly"])
 except KeyError:
     st.error("Manca la sezione `google_service_account` nei secrets Streamlit.")
     st.stop()
-
 drive = build("drive", "v3", credentials=creds)
 
-# ===================== DOWNLOAD PARQUET =====================
-resp = drive.files().list(
-    q=f"name='{base_trend}.parquet'",
-    fields="files(id,name)",
-).execute()
-
+resp = drive.files().list(q=f"name='{base_trend}.parquet'", fields="files(id,name)").execute()
 files = resp.get("files", [])
 if not files:
     st.error(f"Nessun file **{base_trend}.parquet** trovato su Drive.")
@@ -143,10 +106,9 @@ done = False
 while not done:
     _, done = down.next_chunk()
 buf.seek(0)
-
 df = pd.read_parquet(buf)
 
-# ===================== PREPARA DATI =====================
+# ============== PREPARA DATI ==============
 date_str = df.get("Date", pd.Series("", index=df.index)).astype(str)
 time_str = df.get("Time", pd.Series("", index=df.index)).astype(str)
 dt = pd.to_datetime((date_str + " " + time_str).str.strip(), dayfirst=True, errors="coerce")
@@ -169,16 +131,16 @@ tbl = df[cols].copy()
 # Date
 tbl["Date"] = df["__date__"].dt.strftime("%d/%m/%Y")
 
-# Time: parse esplicito +1h e senza secondi (gestisce sia HH:MM:SS che HH:MM)
-t1 = pd.to_datetime(tbl["Time"], format="%H:%M:%S", errors="coerce")
-miss = t1.isna()
-if miss.any():
-    t2 = pd.to_datetime(tbl.loc[miss, "Time"], format="%H:%M", errors="coerce")
-    t1.loc[miss] = t2
-t1 = t1 + pd.to_timedelta(1, "h")
-tbl["Time"] = t1.dt.strftime("%H:%M").fillna(tbl["Time"])
+# Time: gestisce HH:MM:SS o HH:MM, +1h, senza secondi
+t = pd.to_datetime(tbl["Time"], format="%H:%M:%S", errors="coerce")
+m = t.isna()
+if m.any():
+    t2 = pd.to_datetime(tbl.loc[m, "Time"], format="%H:%M", errors="coerce")
+    t.loc[m] = t2
+t = t + pd.to_timedelta(1, "h")
+tbl["Time"] = t.dt.strftime("%H:%M").fillna(tbl["Time"])
 
-# FT e PT
+# FT/PT
 if {"FAV_goal","SFAV_goal"}.issubset(tbl.columns):
     tbl["FT"] = tbl["FAV_goal"].astype("Int64").astype(str) + "-" + tbl["SFAV_goal"].astype("Int64").astype(str)
     tbl.drop(columns=["FAV_goal","SFAV_goal"], inplace=True, errors="ignore")
@@ -186,71 +148,72 @@ if {"FAV_goal_1T","SFAV_goal_1T"}.issubset(tbl.columns):
     tbl["PT"] = tbl["FAV_goal_1T"].astype("Int64").astype(str) + "-" + tbl["SFAV_goal_1T"].astype("Int64").astype(str)
     tbl.drop(columns=["FAV_goal_1T","SFAV_goal_1T"], inplace=True, errors="ignore")
 
-# Percentuali/decimali (manteniamo NetProfit numerici!)
+# Percentuali
 for c in ["p_t","mu_t","P>2.5"]:
     if c in tbl.columns:
         v = pd.to_numeric(tbl[c], errors="coerce")
-        if v.dropna().between(0,1).all():
+        # se è probabilità (0-1) → percentuale
+        if v.dropna().between(0,1).all() and c != "P>2.5":  # P>2.5 va arrotondata a 2 decimali, non in %
             tbl[c] = (v*100).round(1).astype(str) + "%"
 
-for c in ["FAV_odds","Odds1","Odds2"]:
-    if c in tbl.columns:
-        tbl[c] = pd.to_numeric(tbl[c], errors="coerce").round(2)
-
-# NetProfit numerici
+# Rende numerici + rounding dove richiesto
+if "FAV_odds" in tbl.columns:  tbl["FAV_odds"] = pd.to_numeric(tbl["FAV_odds"], errors="coerce").round(2)
+if "P>2.5"   in tbl.columns:  tbl["P>2.5"]   = pd.to_numeric(tbl["P>2.5"], errors="coerce").round(2)
+if "Odds1"   in tbl.columns:  tbl["Odds1"]   = pd.to_numeric(tbl["Odds1"], errors="coerce").round(2)
 for c in ["NetProfit1","NetProfit2"]:
-    if c in tbl.columns:
-        tbl[c] = pd.to_numeric(tbl[c], errors="coerce")
+    if c in tbl.columns: tbl[c] = pd.to_numeric(tbl[c], errors="coerce")
 
-# Bet1/Bet2 icone
+# Bet icone
 def bet_icon(v):
-    try:
-        v = int(v)
-    except Exception:
-        return "—"
-    if v == 1:   return "▲"
-    if v == -1:  return "▼"
+    try: v = int(v)
+    except Exception: return "—"
+    if v == 1:  return "▲"
+    if v == -1: return "▼"
     return "—"
-
-if "Bet1" in tbl.columns:
-    tbl["Bet1"] = tbl["Bet1"].apply(bet_icon)
-if "Bet2" in tbl.columns:
-    tbl["Bet2"] = tbl["Bet2"].apply(bet_icon)
+for c in ["Bet1","Bet2"]:
+    if c in tbl.columns: tbl[c] = tbl[c].apply(bet_icon)
 
 # Ordine colonne
 order = [c for c in ["Date","Time","HomeTeam","AwayTeam","FT","PT","FAV_odds","P>2.5","p_t","mu_t",
                      "Bet1","Odds1","NetProfit1","Bet2","Odds2","NetProfit2"] if c in tbl.columns]
 tbl = tbl[order]
 
-# ===================== STYLER (barrette + soli bordi orizzontali) =====================
+# ============== STYLER (bordi orizzontali, barre + label lato giusto, index nascosto) ==============
 numeric_right = [c for c in ["FAV_odds","Odds1","Odds2"] if c in tbl.columns]
 
 def style_bet(s):
-    styles = []
+    out=[]
     for v in s:
-        if v == "▲":
-            styles.append("color:#2e7d32;font-weight:700")
-        elif v == "▼":
-            styles.append("color:#2e7d32;font-weight:700")
-        else:
-            styles.append("color:#b68b00;font-weight:700")
+        if v=="▲": out.append("color:#2e7d32;font-weight:700")
+        elif v=="▼": out.append("color:#2e7d32;font-weight:700")
+        else: out.append("color:#b68b00;font-weight:700")
+    return out
+
+# allinea numero a sinistra se negativo, a destra se positivo
+def align_profit(s):
+    styles=[]
+    for x in s:
+        if pd.isna(x): styles.append("text-align:center")
+        elif x < 0:    styles.append("text-align:left")
+        elif x > 0:    styles.append("text-align:right")
+        else:          styles.append("text-align:center")
     return styles
 
 base_styles = [
-    {"selector":"table", "props":[("background-color", PAGE_BG), ("color", TEXT_COL),
-                                  ("border-collapse","separate"), ("border-spacing","0")]},
+    {"selector":"table", "props":[("background-color", PAGE_BG), ("color", TEXT_COL), ("border-collapse","separate"), ("border-spacing","0")]},
     {"selector":"thead th", "props":[("background-color", PAGE_BG), ("color", TEXT_COL),
-                                     ("border-top", f"2px solid {TEXT_COL}"),
-                                     ("border-bottom", f"2px solid {TEXT_COL}"),
-                                     ("border-left","0"), ("border-right","0"),
-                                     ("font-weight","700"), ("padding","8px 6px")]},
-    {"selector":"tbody td", "props":[("border-top", f"1px solid {GRID_COL}"),
-                                     ("border-bottom", f"1px solid {GRID_COL}"),
-                                     ("border-left","0"), ("border-right","0"),
-                                     ("background-color", PAGE_BG), ("padding","10px 6px")]},
+                                     ("border-top", f"2px solid {TEXT_COL}"), ("border-bottom", f"2px solid {TEXT_COL}"),
+                                     ("border-left","0"), ("border-right","0"), ("font-weight","700"), ("padding","8px 6px")]},
+    {"selector":"tbody td", "props":[("border-top", f"1px solid {GRID_COL}"), ("border-bottom", f"1px solid {GRID_COL}"),
+                                     ("border-left","0"), ("border-right","0"), ("background-color", PAGE_BG), ("padding","10px 6px")]},
 ]
 
-styler = tbl.style.set_table_styles(base_styles).set_properties(**{"text-align":"left"})
+styler = (tbl.style
+          .set_table_styles(base_styles)
+          .set_properties(**{"text-align":"left"})
+          .hide(axis="index")  # <-- niente indice
+         )
+
 if numeric_right:
     styler = styler.set_properties(subset=numeric_right, **{"text-align":"right"})
 
@@ -258,7 +221,7 @@ for bet_col in ["Bet1","Bet2"]:
     if bet_col in tbl.columns:
         styler = styler.apply(style_bet, subset=[bet_col])
 
-# Barre centrate su 0: verde (>0) / rosso (<0), mantenendo testo numerico
+# barre centered + formato 2 decimali + allineamento numero lato giusto
 for np_col in ["NetProfit1","NetProfit2"]:
     if np_col in tbl.columns:
         v = tbl[np_col]
@@ -266,45 +229,37 @@ for np_col in ["NetProfit1","NetProfit2"]:
         styler = (styler
                   .bar(subset=[np_col], align="mid",
                        color=["#c0392b", "#2e7d32"], vmin=-rng, vmax=rng)
+                  .apply(align_profit, subset=[np_col])
                   .format({np_col: "{:.2f}"}))
 
-# ===================== RENDER TABELLA (HTML) =====================
+# rounding a 2 decimali per le colonne richieste
+fmt_cols = {c: "{:.2f}" for c in ["FAV_odds","P>2.5","Odds1","NetProfit1"] if c in tbl.columns}
+if fmt_cols:
+    styler = styler.format(fmt_cols)
+
+# ====== RENDER ======
 st.subheader("Partite (dopo split_date)")
 st.markdown(f'<div class="styled-table">{styler.to_html()}</div>', unsafe_allow_html=True)
 
-# ===================== NETPROFIT CUMULATO (ALTAIR) =====================
+# ============== GRAFICO (Altair) ==============
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
 np2 = pd.to_numeric(df.get("NetProfit2", 0), errors="coerce").fillna(0.0)
-
-by_day = (
-    pd.DataFrame({"Date": df["__date__"], "NetProfit1": np1, "NetProfit2": np2})
-      .groupby("Date", as_index=False).sum()
-      .sort_values("Date")
-)
+by_day = (pd.DataFrame({"Date": df["__date__"], "NetProfit1": np1, "NetProfit2": np2})
+          .groupby("Date", as_index=False).sum().sort_values("Date"))
 by_day["Cum_NetProfit1"] = by_day["NetProfit1"].cumsum()
 by_day["Cum_NetProfit2"] = by_day["NetProfit2"].cumsum()
 
-chart_df = by_day.melt(
-    id_vars="Date",
-    value_vars=["Cum_NetProfit1","Cum_NetProfit2"],
-    var_name="Serie",
-    value_name="Valore"
-)
-
+chart_df = by_day.melt(id_vars="Date", value_vars=["Cum_NetProfit1","Cum_NetProfit2"],
+                       var_name="Serie", value_name="Valore")
 color_scale = alt.Scale(domain=["Cum_NetProfit1","Cum_NetProfit2"], range=LINE_COLS)
 
-chart = (
-    alt.Chart(chart_df, background=PAGE_BG)
-      .mark_line()
-      .encode(
-          x=alt.X("Date:T", axis=alt.Axis(title=None, labelColor=TEXT_COL, tickColor=TEXT_COL, domainColor=TEXT_COL)),
-          y=alt.Y("Valore:Q", axis=alt.Axis(title=None, labelColor=TEXT_COL, tickColor=TEXT_COL, domainColor=TEXT_COL)),
-          color=alt.Color("Serie:N", scale=color_scale, legend=alt.Legend(title=None, labelColor=TEXT_COL))
-      )
-      .properties(height=380, width="container")
-      .configure_view(strokeWidth=0)
-      .configure_axis(grid=True, gridColor=GRID_COL, gridOpacity=0.7)
-)
+chart = (alt.Chart(chart_df, background=PAGE_BG).mark_line().encode(
+            x=alt.X("Date:T", axis=alt.Axis(title=None, labelColor=TEXT_COL, tickColor=TEXT_COL, domainColor=TEXT_COL)),
+            y=alt.Y("Valore:Q", axis=alt.Axis(title=None, labelColor=TEXT_COL, tickColor=TEXT_COL, domainColor=TEXT_COL)),
+            color=alt.Color("Serie:N", scale=color_scale, legend=alt.Legend(title=None, labelColor=TEXT_COL))
+         ).properties(height=380, width="container")
+         .configure_view(strokeWidth=0)
+         .configure_axis(grid=True, gridColor=GRID_COL, gridOpacity=0.7))
 
 st.subheader("NetProfit cumulato")
 st.altair_chart(chart, use_container_width=True)
