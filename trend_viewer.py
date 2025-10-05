@@ -10,16 +10,15 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# ===================== CONFIG GENERALE =====================
+# ===================== CONFIG =====================
 st.set_page_config(page_title="Trend Deep-Dive", layout="wide")
 
-# Colori / stile pagina
 PAGE_BG   = "#EFE9E6"
 TEXT_COL  = "#1E1E1E"
 GRID_COL  = "#d7d2cd"
-LINE_COLS = ["#287271", "#495371"]  # serie grafico
+LINE_COLS = ["#287271", "#495371"]
 
-# ---------- CSS pagina, tabella e grafico ----------
+# ---------- CSS pagina + stile tabella ----------
 st.markdown(
     f"""
     <style>
@@ -38,38 +37,36 @@ st.markdown(
         margin-bottom: 0.6rem;
     }}
 
-    /* DataFrame: font più grande e righe più alte + stesso sfondo */
-    div[data-testid="stDataFrame"] table {{
-        font-size: 16px !important;
-        background-color: {PAGE_BG} !important;
-        border-collapse: separate !important;
-        border-spacing: 0 !important;
+    /* container della tabella HTML */
+    .styled-table table {{
+        width: 100%;
+        font-size: 16px;
+        border-collapse: separate;
+        border-spacing: 0;
+        background-color: {PAGE_BG};
+        color: {TEXT_COL};
     }}
-    div[data-testid="stDataFrame"] tbody tr {{
-        height: 36px !important;
+    .styled-table thead th {{
+        background-color: {PAGE_BG};
+        color: {TEXT_COL};
+        border-top: 2px solid {TEXT_COL};
+        border-bottom: 2px solid {TEXT_COL};
+        border-left: 0;
+        border-right: 0;
+        font-weight: 700;
+        padding: 8px 6px;
+    }}
+    .styled-table tbody td {{
+        background-color: {PAGE_BG};
+        border-top: 1px solid {GRID_COL};
+        border-bottom: 1px solid {GRID_COL};
+        border-left: 0;
+        border-right: 0;
+        padding: 10px 6px;   /* altezza riga maggiore */
     }}
 
-    /* solo bordi orizzontali */
-    div[data-testid="stDataFrame"] thead th {{
-        background-color: {PAGE_BG} !important;
-        color: {TEXT_COL} !important;
-        border-top: 2px solid {TEXT_COL} !important;
-        border-bottom: 2px solid {TEXT_COL} !important;
-        border-left: 0 !important;
-        border-right: 0 !important;
-        font-weight: 700 !important;
-    }}
-    div[data-testid="stDataFrame"] tbody td {{
-        background-color: {PAGE_BG} !important;
-        border-top: 1px solid {GRID_COL} !important;
-        border-bottom: 1px solid {GRID_COL} !important;
-        border-left: 0 !important;
-        border-right: 0 !important;
-    }}
-
-    /* Allineamento elementi ai margini */
-    div[data-testid="stDataFrame"],
-    div[data-testid="stVegaLiteChart"] > div {{
+    /* allinea elementi ai margini */
+    .styled-table, div[data-testid="stVegaLiteChart"] > div {{
         margin-left: 0 !important;
     }}
     </style>
@@ -172,10 +169,14 @@ tbl = df[cols].copy()
 # Date
 tbl["Date"] = df["__date__"].dt.strftime("%d/%m/%Y")
 
-# Time: +1h e senza secondi
-_time_parsed = pd.to_datetime(tbl["Time"], errors="coerce")
-_time_shifted = _time_parsed + pd.to_timedelta(1, unit="h")
-tbl["Time"] = _time_shifted.dt.strftime("%H:%M").fillna(tbl["Time"])
+# Time: parse esplicito +1h e senza secondi (gestisce sia HH:MM:SS che HH:MM)
+t1 = pd.to_datetime(tbl["Time"], format="%H:%M:%S", errors="coerce")
+miss = t1.isna()
+if miss.any():
+    t2 = pd.to_datetime(tbl.loc[miss, "Time"], format="%H:%M", errors="coerce")
+    t1.loc[miss] = t2
+t1 = t1 + pd.to_timedelta(1, "h")
+tbl["Time"] = t1.dt.strftime("%H:%M").fillna(tbl["Time"])
 
 # FT e PT
 if {"FAV_goal","SFAV_goal"}.issubset(tbl.columns):
@@ -196,12 +197,12 @@ for c in ["FAV_odds","Odds1","Odds2"]:
     if c in tbl.columns:
         tbl[c] = pd.to_numeric(tbl[c], errors="coerce").round(2)
 
-# NetProfit rimangono numerici
+# NetProfit numerici
 for c in ["NetProfit1","NetProfit2"]:
     if c in tbl.columns:
         tbl[c] = pd.to_numeric(tbl[c], errors="coerce")
 
-# Bet1/Bet2 → icone
+# Bet1/Bet2 icone
 def bet_icon(v):
     try:
         v = int(v)
@@ -221,7 +222,7 @@ order = [c for c in ["Date","Time","HomeTeam","AwayTeam","FT","PT","FAV_odds","P
                      "Bet1","Odds1","NetProfit1","Bet2","Odds2","NetProfit2"] if c in tbl.columns]
 tbl = tbl[order]
 
-# ===================== STYLER: SOLO BORDI ORIZZONTALI + BARRE =====================
+# ===================== STYLER (barrette + soli bordi orizzontali) =====================
 numeric_right = [c for c in ["FAV_odds","Odds1","Odds2"] if c in tbl.columns]
 
 def style_bet(s):
@@ -236,16 +237,17 @@ def style_bet(s):
     return styles
 
 base_styles = [
-    {"selector":"table", "props":[("background-color", PAGE_BG), ("color", TEXT_COL), ("border-collapse","separate"), ("border-spacing","0")]},
+    {"selector":"table", "props":[("background-color", PAGE_BG), ("color", TEXT_COL),
+                                  ("border-collapse","separate"), ("border-spacing","0")]},
     {"selector":"thead th", "props":[("background-color", PAGE_BG), ("color", TEXT_COL),
                                      ("border-top", f"2px solid {TEXT_COL}"),
                                      ("border-bottom", f"2px solid {TEXT_COL}"),
                                      ("border-left","0"), ("border-right","0"),
-                                     ("font-weight","700")]},
+                                     ("font-weight","700"), ("padding","8px 6px")]},
     {"selector":"tbody td", "props":[("border-top", f"1px solid {GRID_COL}"),
                                      ("border-bottom", f"1px solid {GRID_COL}"),
                                      ("border-left","0"), ("border-right","0"),
-                                     ("background-color", PAGE_BG)]},
+                                     ("background-color", PAGE_BG), ("padding","10px 6px")]},
 ]
 
 styler = tbl.style.set_table_styles(base_styles).set_properties(**{"text-align":"left"})
@@ -256,20 +258,19 @@ for bet_col in ["Bet1","Bet2"]:
     if bet_col in tbl.columns:
         styler = styler.apply(style_bet, subset=[bet_col])
 
-# Barrette per NetProfit (verde>0, rosso<0) – colonne rimangono numeriche
+# Barre centrate su 0: verde (>0) / rosso (<0), mantenendo testo numerico
 for np_col in ["NetProfit1","NetProfit2"]:
     if np_col in tbl.columns:
-        styler = styler.bar(
-            subset=[np_col],
-            align="mid",
-            color=["#c0392b", "#2e7d32"],  # rosso, verde
-            vmin=tbl[np_col].min(skipna=True),
-            vmax=tbl[np_col].max(skipna=True),
-        ).format({np_col: "{:.2f}"})
+        v = tbl[np_col]
+        rng = max(abs(v.min(skipna=True)), abs(v.max(skipna=True)))
+        styler = (styler
+                  .bar(subset=[np_col], align="mid",
+                       color=["#c0392b", "#2e7d32"], vmin=-rng, vmax=rng)
+                  .format({np_col: "{:.2f}"}))
 
-# ===================== RENDER TABELLA =====================
+# ===================== RENDER TABELLA (HTML) =====================
 st.subheader("Partite (dopo split_date)")
-st.dataframe(styler, use_container_width=True, hide_index=True)
+st.markdown(f'<div class="styled-table">{styler.to_html()}</div>', unsafe_allow_html=True)
 
 # ===================== NETPROFIT CUMULATO (ALTAIR) =====================
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
@@ -290,10 +291,7 @@ chart_df = by_day.melt(
     value_name="Valore"
 )
 
-color_scale = alt.Scale(
-    domain=["Cum_NetProfit1","Cum_NetProfit2"],
-    range=LINE_COLS
-)
+color_scale = alt.Scale(domain=["Cum_NetProfit1","Cum_NetProfit2"], range=LINE_COLS)
 
 chart = (
     alt.Chart(chart_df, background=PAGE_BG)
