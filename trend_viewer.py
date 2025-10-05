@@ -216,5 +216,3 @@ line = base.mark_line().properties(
 
 st.subheader("NetProfit cumulato")
 st.altair_chart(line, use_container_width=True)
-
-)
