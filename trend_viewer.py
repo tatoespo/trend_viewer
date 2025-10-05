@@ -10,7 +10,6 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-
 # ===================== CONFIG GENERALE =====================
 st.set_page_config(page_title="Trend Deep-Dive", layout="wide")
 
@@ -39,13 +38,33 @@ st.markdown(
         margin-bottom: 0.6rem;
     }}
 
-    /* DataFrame: font più grande e righe più alte */
+    /* DataFrame: font più grande e righe più alte + stesso sfondo */
     div[data-testid="stDataFrame"] table {{
         font-size: 16px !important;
-        background-color: {PAGE_BG} !important;   /* stesso sfondo della pagina */
+        background-color: {PAGE_BG} !important;
+        border-collapse: separate !important;
+        border-spacing: 0 !important;
     }}
     div[data-testid="stDataFrame"] tbody tr {{
         height: 36px !important;
+    }}
+
+    /* solo bordi orizzontali */
+    div[data-testid="stDataFrame"] thead th {{
+        background-color: {PAGE_BG} !important;
+        color: {TEXT_COL} !important;
+        border-top: 2px solid {TEXT_COL} !important;
+        border-bottom: 2px solid {TEXT_COL} !important;
+        border-left: 0 !important;
+        border-right: 0 !important;
+        font-weight: 700 !important;
+    }}
+    div[data-testid="stDataFrame"] tbody td {{
+        background-color: {PAGE_BG} !important;
+        border-top: 1px solid {GRID_COL} !important;
+        border-bottom: 1px solid {GRID_COL} !important;
+        border-left: 0 !important;
+        border-right: 0 !important;
     }}
 
     /* Allineamento elementi ai margini */
@@ -59,7 +78,6 @@ st.markdown(
 )
 
 st.title("Trend Deep-Dive")
-
 
 # ===================== SPLIT DATE =====================
 def _parse_split(val):
@@ -89,7 +107,6 @@ def load_split_date():
 
 SPLIT_DATE = load_split_date()
 
-
 # ===================== PARAMETRI URL =====================
 trend = st.query_params.get("trend")
 if not trend:
@@ -98,7 +115,6 @@ if not trend:
 
 base_trend = trend[:-1]
 st.caption(f"Trend selezionato: **{trend}** • Split date: **{SPLIT_DATE.date()}**")
-
 
 # ===================== GOOGLE DRIVE =====================
 try:
@@ -111,7 +127,6 @@ except KeyError:
     st.stop()
 
 drive = build("drive", "v3", credentials=creds)
-
 
 # ===================== DOWNLOAD PARQUET =====================
 resp = drive.files().list(
@@ -134,22 +149,18 @@ buf.seek(0)
 
 df = pd.read_parquet(buf)
 
-
 # ===================== PREPARA DATI =====================
-# Datetime di riferimento
 date_str = df.get("Date", pd.Series("", index=df.index)).astype(str)
 time_str = df.get("Time", pd.Series("", index=df.index)).astype(str)
 dt = pd.to_datetime((date_str + " " + time_str).str.strip(), dayfirst=True, errors="coerce")
 df["__dt__"] = dt
 df["__date__"] = df["__dt__"].dt.normalize()
 
-# Filtro e ordinamento
 df = df[df["__date__"] >= SPLIT_DATE].sort_values("__dt__").reset_index(drop=True)
 if df.empty:
     st.info("Nessun evento dopo la split_date.")
     st.stop()
 
-# Colonne desiderate (le originali per il merge FT/PT verranno poi rimosse)
 wanted = [
     "Date","Time","HomeTeam","AwayTeam","FAV_odds","P>2.5",
     "FAV_goal","SFAV_goal","FAV_goal_1T","SFAV_goal_1T",
@@ -158,7 +169,7 @@ wanted = [
 cols = [c for c in wanted if c in df.columns]
 tbl = df[cols].copy()
 
-# Formatta Date, Time e crea FT/PT
+# Date
 tbl["Date"] = df["__date__"].dt.strftime("%d/%m/%Y")
 
 # Time: +1h e senza secondi
@@ -166,7 +177,7 @@ _time_parsed = pd.to_datetime(tbl["Time"], errors="coerce")
 _time_shifted = _time_parsed + pd.to_timedelta(1, unit="h")
 tbl["Time"] = _time_shifted.dt.strftime("%H:%M").fillna(tbl["Time"])
 
-# FT e PT (e rimuovi colonne originali)
+# FT e PT
 if {"FAV_goal","SFAV_goal"}.issubset(tbl.columns):
     tbl["FT"] = tbl["FAV_goal"].astype("Int64").astype(str) + "-" + tbl["SFAV_goal"].astype("Int64").astype(str)
     tbl.drop(columns=["FAV_goal","SFAV_goal"], inplace=True, errors="ignore")
@@ -174,59 +185,57 @@ if {"FAV_goal_1T","SFAV_goal_1T"}.issubset(tbl.columns):
     tbl["PT"] = tbl["FAV_goal_1T"].astype("Int64").astype(str) + "-" + tbl["SFAV_goal_1T"].astype("Int64").astype(str)
     tbl.drop(columns=["FAV_goal_1T","SFAV_goal_1T"], inplace=True, errors="ignore")
 
-# Percentuali/decimali
+# Percentuali/decimali (manteniamo NetProfit numerici!)
 for c in ["p_t","mu_t","P>2.5"]:
     if c in tbl.columns:
         v = pd.to_numeric(tbl[c], errors="coerce")
         if v.dropna().between(0,1).all():
             tbl[c] = (v*100).round(1).astype(str) + "%"
 
-for c in ["FAV_odds","Odds1","Odds2","NetProfit1","NetProfit2"]:
+for c in ["FAV_odds","Odds1","Odds2"]:
     if c in tbl.columns:
         tbl[c] = pd.to_numeric(tbl[c], errors="coerce").round(2)
 
-# Bet1/Bet2 come icone
+# NetProfit rimangono numerici
+for c in ["NetProfit1","NetProfit2"]:
+    if c in tbl.columns:
+        tbl[c] = pd.to_numeric(tbl[c], errors="coerce")
+
+# Bet1/Bet2 → icone
 def bet_icon(v):
     try:
         v = int(v)
     except Exception:
         return "—"
-    if v == 1:
-        return "▲"   # up green
-    if v == -1:
-        return "▼"   # down green
-    return "—"       # dash yellow
+    if v == 1:   return "▲"
+    if v == -1:  return "▼"
+    return "—"
 
 if "Bet1" in tbl.columns:
     tbl["Bet1"] = tbl["Bet1"].apply(bet_icon)
 if "Bet2" in tbl.columns:
     tbl["Bet2"] = tbl["Bet2"].apply(bet_icon)
 
-# Ordine colonne (FT/PT subito dopo squadre)
+# Ordine colonne
 order = [c for c in ["Date","Time","HomeTeam","AwayTeam","FT","PT","FAV_odds","P>2.5","p_t","mu_t",
                      "Bet1","Odds1","NetProfit1","Bet2","Odds2","NetProfit2"] if c in tbl.columns]
-tbl = tbl[order].fillna("")
+tbl = tbl[order]
 
+# ===================== STYLER: SOLO BORDI ORIZZONTALI + BARRE =====================
+numeric_right = [c for c in ["FAV_odds","Odds1","Odds2"] if c in tbl.columns]
 
-# ===================== STYLER: SOLO BORDI ORIZZONTALI + COLORI + BARRE =====================
-# colonne numeriche per allineamento a destra
-numeric_like = [c for c in ["FAV_odds","Odds1","Odds2","NetProfit1","NetProfit2"] if c in tbl.columns]
-
-# style per icone Bet
 def style_bet(s):
     styles = []
     for v in s:
         if v == "▲":
-            styles.append("color:#2e7d32;font-weight:700")     # verde
+            styles.append("color:#2e7d32;font-weight:700")
         elif v == "▼":
-            styles.append("color:#2e7d32;font-weight:700")     # verde (verso il basso)
+            styles.append("color:#2e7d32;font-weight:700")
         else:
-            styles.append("color:#b68b00;font-weight:700")     # giallo
+            styles.append("color:#b68b00;font-weight:700")
     return styles
 
-# stile generale tabella
 base_styles = [
-    # sfondo tabella e testo
     {"selector":"table", "props":[("background-color", PAGE_BG), ("color", TEXT_COL), ("border-collapse","separate"), ("border-spacing","0")]},
     {"selector":"thead th", "props":[("background-color", PAGE_BG), ("color", TEXT_COL),
                                      ("border-top", f"2px solid {TEXT_COL}"),
@@ -237,39 +246,30 @@ base_styles = [
                                      ("border-bottom", f"1px solid {GRID_COL}"),
                                      ("border-left","0"), ("border-right","0"),
                                      ("background-color", PAGE_BG)]},
-    {"selector":"tbody tr:nth-child(even) td", "props":[("background-color", PAGE_BG)]},  # stesso sfondo (niente zebra)
 ]
 
-styler = (
-    tbl.style
-      .set_table_styles(base_styles)
-      .set_properties(**{"text-align":"left"})  # default
-)
+styler = tbl.style.set_table_styles(base_styles).set_properties(**{"text-align":"left"})
+if numeric_right:
+    styler = styler.set_properties(subset=numeric_right, **{"text-align":"right"})
 
-if numeric_like:
-    styler = styler.set_properties(subset=numeric_like, **{"text-align":"right"})
-
-# Colora le icone Bet
 for bet_col in ["Bet1","Bet2"]:
     if bet_col in tbl.columns:
         styler = styler.apply(style_bet, subset=[bet_col])
 
-# Barrette per NetProfit (verde>0, rosso<0) con baseline centrale
+# Barrette per NetProfit (verde>0, rosso<0) – colonne rimangono numeriche
 for np_col in ["NetProfit1","NetProfit2"]:
     if np_col in tbl.columns:
-        # allinea al centro (zero) e colori custom
         styler = styler.bar(
             subset=[np_col],
             align="mid",
-            color=["#c0392b", "#2e7d32"],  # negativo -> rosso, positivo -> verde
-            vmin=tbl[np_col].min(),
-            vmax=tbl[np_col].max(),
-        )
+            color=["#c0392b", "#2e7d32"],  # rosso, verde
+            vmin=tbl[np_col].min(skipna=True),
+            vmax=tbl[np_col].max(skipna=True),
+        ).format({np_col: "{:.2f}"})
 
 # ===================== RENDER TABELLA =====================
 st.subheader("Partite (dopo split_date)")
 st.dataframe(styler, use_container_width=True, hide_index=True)
-
 
 # ===================== NETPROFIT CUMULATO (ALTAIR) =====================
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
