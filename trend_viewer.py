@@ -10,15 +10,17 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# ============== CONFIG GENERALE ==============
+
+# ===================== CONFIG GENERALE =====================
 st.set_page_config(page_title="Trend Deep-Dive", layout="wide")
 
-# --- Colori e stile richiesti ---
-PAGE_BG   = "#EFE9E6"     # sfondo pagina e grafici
+# Colori / stile pagina
+PAGE_BG   = "#EFE9E6"
 TEXT_COL  = "#1E1E1E"
-LINE_COLS = ["#287271", "#495371"]  # serie 1 e 2
+GRID_COL  = "#d7d2cd"
+LINE_COLS = ["#287271", "#495371"]  # serie grafico
 
-# ---------- CSS: sfondo, allineamento ai margini, tabella leggibile ----------
+# ---------- CSS pagina, tabella e grafico ----------
 st.markdown(
     f"""
     <style>
@@ -26,30 +28,29 @@ st.markdown(
         background-color: {PAGE_BG};
         color: {TEXT_COL};
     }}
-
     .block-container {{
         max-width: 1600px;
         padding-top: 0.6rem;
-        padding-left: 1.0rem;   /* margine sinistro omogeneo */
+        padding-left: 1.0rem;
         padding-right: 1.0rem;
     }}
-
     h1, h2, h3 {{
         margin-top: 0.2rem;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.6rem;
     }}
 
-    /* Tabella nativa: font più grande e righe più alte */
+    /* DataFrame: font più grande e righe più alte */
     div[data-testid="stDataFrame"] table {{
-        font-size: 16px !important;        /* testi più grandi */
+        font-size: 16px !important;
+        background-color: {PAGE_BG} !important;   /* stesso sfondo della pagina */
     }}
     div[data-testid="stDataFrame"] tbody tr {{
-        height: 36px !important;           /* righe più alte */
+        height: 36px !important;
     }}
 
-    /* Assicura che gli elementi grafici siano allineati a sinistra */
-    div[data-testid="stVegaLiteChart"] > div, 
-    div[data-testid="stDataFrame"] {{
+    /* Allineamento elementi ai margini */
+    div[data-testid="stDataFrame"],
+    div[data-testid="stVegaLiteChart"] > div {{
         margin-left: 0 !important;
     }}
     </style>
@@ -59,12 +60,13 @@ st.markdown(
 
 st.title("Trend Deep-Dive")
 
-# ============== SPLIT DATE ==============
+
+# ===================== SPLIT DATE =====================
 def _parse_split(val):
     if val is None:
         return None
     s = str(val).strip()
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):           # ISO: niente warning
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
         return pd.to_datetime(s, format="%Y-%m-%d", errors="coerce").normalize()
     return pd.to_datetime(s, dayfirst=True, errors="coerce").normalize()
 
@@ -87,7 +89,8 @@ def load_split_date():
 
 SPLIT_DATE = load_split_date()
 
-# ============== PARAMETRI URL ==============
+
+# ===================== PARAMETRI URL =====================
 trend = st.query_params.get("trend")
 if not trend:
     st.warning("⚠️ Nessun trend passato nell’URL. Usa ?trend=CODICE_TREND.")
@@ -96,11 +99,12 @@ if not trend:
 base_trend = trend[:-1]
 st.caption(f"Trend selezionato: **{trend}** • Split date: **{SPLIT_DATE.date()}**")
 
-# ============== GOOGLE DRIVE ==============
+
+# ===================== GOOGLE DRIVE =====================
 try:
     creds = service_account.Credentials.from_service_account_info(
         st.secrets["google_service_account"],
-        scopes=["https://www.googleapis.com/auth/drive.readonly"]
+        scopes=["https://www.googleapis.com/auth/drive.readonly"],
     )
 except KeyError:
     st.error("Manca la sezione `google_service_account` nei secrets Streamlit.")
@@ -108,7 +112,8 @@ except KeyError:
 
 drive = build("drive", "v3", credentials=creds)
 
-# ============== DOWNLOAD PARQUET ==============
+
+# ===================== DOWNLOAD PARQUET =====================
 resp = drive.files().list(
     q=f"name='{base_trend}.parquet'",
     fields="files(id,name)",
@@ -129,18 +134,22 @@ buf.seek(0)
 
 df = pd.read_parquet(buf)
 
-# ============== PREPARA DATI ==============
+
+# ===================== PREPARA DATI =====================
+# Datetime di riferimento
 date_str = df.get("Date", pd.Series("", index=df.index)).astype(str)
 time_str = df.get("Time", pd.Series("", index=df.index)).astype(str)
 dt = pd.to_datetime((date_str + " " + time_str).str.strip(), dayfirst=True, errors="coerce")
 df["__dt__"] = dt
 df["__date__"] = df["__dt__"].dt.normalize()
 
+# Filtro e ordinamento
 df = df[df["__date__"] >= SPLIT_DATE].sort_values("__dt__").reset_index(drop=True)
 if df.empty:
     st.info("Nessun evento dopo la split_date.")
     st.stop()
 
+# Colonne desiderate (le originali per il merge FT/PT verranno poi rimosse)
 wanted = [
     "Date","Time","HomeTeam","AwayTeam","FAV_odds","P>2.5",
     "FAV_goal","SFAV_goal","FAV_goal_1T","SFAV_goal_1T",
@@ -148,9 +157,24 @@ wanted = [
 ]
 cols = [c for c in wanted if c in df.columns]
 tbl = df[cols].copy()
+
+# Formatta Date, Time e crea FT/PT
 tbl["Date"] = df["__date__"].dt.strftime("%d/%m/%Y")
 
-# formattazioni percentuali/decimali
+# Time: +1h e senza secondi
+_time_parsed = pd.to_datetime(tbl["Time"], errors="coerce")
+_time_shifted = _time_parsed + pd.to_timedelta(1, unit="h")
+tbl["Time"] = _time_shifted.dt.strftime("%H:%M").fillna(tbl["Time"])
+
+# FT e PT (e rimuovi colonne originali)
+if {"FAV_goal","SFAV_goal"}.issubset(tbl.columns):
+    tbl["FT"] = tbl["FAV_goal"].astype("Int64").astype(str) + "-" + tbl["SFAV_goal"].astype("Int64").astype(str)
+    tbl.drop(columns=["FAV_goal","SFAV_goal"], inplace=True, errors="ignore")
+if {"FAV_goal_1T","SFAV_goal_1T"}.issubset(tbl.columns):
+    tbl["PT"] = tbl["FAV_goal_1T"].astype("Int64").astype(str) + "-" + tbl["SFAV_goal_1T"].astype("Int64").astype(str)
+    tbl.drop(columns=["FAV_goal_1T","SFAV_goal_1T"], inplace=True, errors="ignore")
+
+# Percentuali/decimali
 for c in ["p_t","mu_t","P>2.5"]:
     if c in tbl.columns:
         v = pd.to_numeric(tbl[c], errors="coerce")
@@ -161,17 +185,93 @@ for c in ["FAV_odds","Odds1","Odds2","NetProfit1","NetProfit2"]:
     if c in tbl.columns:
         tbl[c] = pd.to_numeric(tbl[c], errors="coerce").round(2)
 
-tbl = tbl.fillna("")
+# Bet1/Bet2 come icone
+def bet_icon(v):
+    try:
+        v = int(v)
+    except Exception:
+        return "—"
+    if v == 1:
+        return "▲"   # up green
+    if v == -1:
+        return "▼"   # down green
+    return "—"       # dash yellow
 
-# ============== TABELLA NATIVA STREAMLIT ==============
-st.subheader("Partite (dopo split_date)")
-st.dataframe(
-    tbl,
-    use_container_width=True,
-    hide_index=True
+if "Bet1" in tbl.columns:
+    tbl["Bet1"] = tbl["Bet1"].apply(bet_icon)
+if "Bet2" in tbl.columns:
+    tbl["Bet2"] = tbl["Bet2"].apply(bet_icon)
+
+# Ordine colonne (FT/PT subito dopo squadre)
+order = [c for c in ["Date","Time","HomeTeam","AwayTeam","FT","PT","FAV_odds","P>2.5","p_t","mu_t",
+                     "Bet1","Odds1","NetProfit1","Bet2","Odds2","NetProfit2"] if c in tbl.columns]
+tbl = tbl[order].fillna("")
+
+
+# ===================== STYLER: SOLO BORDI ORIZZONTALI + COLORI + BARRE =====================
+# colonne numeriche per allineamento a destra
+numeric_like = [c for c in ["FAV_odds","Odds1","Odds2","NetProfit1","NetProfit2"] if c in tbl.columns]
+
+# style per icone Bet
+def style_bet(s):
+    styles = []
+    for v in s:
+        if v == "▲":
+            styles.append("color:#2e7d32;font-weight:700")     # verde
+        elif v == "▼":
+            styles.append("color:#2e7d32;font-weight:700")     # verde (verso il basso)
+        else:
+            styles.append("color:#b68b00;font-weight:700")     # giallo
+    return styles
+
+# stile generale tabella
+base_styles = [
+    # sfondo tabella e testo
+    {"selector":"table", "props":[("background-color", PAGE_BG), ("color", TEXT_COL), ("border-collapse","separate"), ("border-spacing","0")]},
+    {"selector":"thead th", "props":[("background-color", PAGE_BG), ("color", TEXT_COL),
+                                     ("border-top", f"2px solid {TEXT_COL}"),
+                                     ("border-bottom", f"2px solid {TEXT_COL}"),
+                                     ("border-left","0"), ("border-right","0"),
+                                     ("font-weight","700")]},
+    {"selector":"tbody td", "props":[("border-top", f"1px solid {GRID_COL}"),
+                                     ("border-bottom", f"1px solid {GRID_COL}"),
+                                     ("border-left","0"), ("border-right","0"),
+                                     ("background-color", PAGE_BG)]},
+    {"selector":"tbody tr:nth-child(even) td", "props":[("background-color", PAGE_BG)]},  # stesso sfondo (niente zebra)
+]
+
+styler = (
+    tbl.style
+      .set_table_styles(base_styles)
+      .set_properties(**{"text-align":"left"})  # default
 )
 
-# ============== NETPROFIT CUMULATO (ALTAIR, STESSO SFONDO) ==============
+if numeric_like:
+    styler = styler.set_properties(subset=numeric_like, **{"text-align":"right"})
+
+# Colora le icone Bet
+for bet_col in ["Bet1","Bet2"]:
+    if bet_col in tbl.columns:
+        styler = styler.apply(style_bet, subset=[bet_col])
+
+# Barrette per NetProfit (verde>0, rosso<0) con baseline centrale
+for np_col in ["NetProfit1","NetProfit2"]:
+    if np_col in tbl.columns:
+        # allinea al centro (zero) e colori custom
+        styler = styler.bar(
+            subset=[np_col],
+            align="mid",
+            color=["#c0392b", "#2e7d32"],  # negativo -> rosso, positivo -> verde
+            vmin=tbl[np_col].min(),
+            vmax=tbl[np_col].max(),
+        )
+
+# ===================== RENDER TABELLA =====================
+st.subheader("Partite (dopo split_date)")
+st.dataframe(styler, use_container_width=True, hide_index=True)
+
+
+# ===================== NETPROFIT CUMULATO (ALTAIR) =====================
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
 np2 = pd.to_numeric(df.get("NetProfit2", 0), errors="coerce").fillna(0.0)
 
@@ -183,36 +283,30 @@ by_day = (
 by_day["Cum_NetProfit1"] = by_day["NetProfit1"].cumsum()
 by_day["Cum_NetProfit2"] = by_day["NetProfit2"].cumsum()
 
-# dati in formato "long" per Altair
 chart_df = by_day.melt(
     id_vars="Date",
-    value_vars=["Cum_NetProfit1", "Cum_NetProfit2"],
+    value_vars=["Cum_NetProfit1","Cum_NetProfit2"],
     var_name="Serie",
     value_name="Valore"
 )
 
 color_scale = alt.Scale(
-    domain=["Cum_NetProfit1", "Cum_NetProfit2"],
+    domain=["Cum_NetProfit1","Cum_NetProfit2"],
     range=LINE_COLS
 )
 
-base = alt.Chart(chart_df).encode(
-    x=alt.X("Date:T", axis=alt.Axis(title=None, labelColor=TEXT_COL, tickColor=TEXT_COL, domainColor=TEXT_COL)),
-    y=alt.Y("Valore:Q", axis=alt.Axis(title=None, labelColor=TEXT_COL, tickColor=TEXT_COL, domainColor=TEXT_COL)),
-    color=alt.Color("Serie:N", scale=color_scale, legend=alt.Legend(title=None, labelColor=TEXT_COL))
-)
-
-line = base.mark_line().properties(
-    width="container",
-    height=360,
-    background=PAGE_BG
-).configure_view(
-    strokeWidth=0,   # senza bordo esterno
-).configure_axis(
-    grid=True,
-    gridColor="#d7d2cd",
-    gridOpacity=0.7
+chart = (
+    alt.Chart(chart_df, background=PAGE_BG)
+      .mark_line()
+      .encode(
+          x=alt.X("Date:T", axis=alt.Axis(title=None, labelColor=TEXT_COL, tickColor=TEXT_COL, domainColor=TEXT_COL)),
+          y=alt.Y("Valore:Q", axis=alt.Axis(title=None, labelColor=TEXT_COL, tickColor=TEXT_COL, domainColor=TEXT_COL)),
+          color=alt.Color("Serie:N", scale=color_scale, legend=alt.Legend(title=None, labelColor=TEXT_COL))
+      )
+      .properties(height=380, width="container")
+      .configure_view(strokeWidth=0)
+      .configure_axis(grid=True, gridColor=GRID_COL, gridOpacity=0.7)
 )
 
 st.subheader("NetProfit cumulato")
-st.altair_chart(line, use_container_width=True)
+st.altair_chart(chart, use_container_width=True)
