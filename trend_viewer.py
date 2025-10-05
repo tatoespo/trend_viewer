@@ -1,5 +1,3 @@
-# trend_viewer.py
-
 import os
 import io
 import re
@@ -11,119 +9,38 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# Matplotlib (tabella stile "sonofacorner")
+# Matplotlib (stile "sonofacorner")
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
-from base64 import b64encode
+from PIL import Image
 
-# ============== IMPOSTAZIONI STREAMLIT ==============
+# ============== CONFIG GENERALE ==============
 st.set_page_config(page_title="Trend Deep-Dive", layout="wide")
 
-# Palette “soft” stile sonofacorner
-PAGE_BG   = "#F7F5F2"   # beige chiaro pagina
-HEADER_BG = "#EFECE6"   # header tabella
-ROW_EVEN  = "#FBFAF7"   # zebra rows
-GRID_COL  = "#C6C6C6"   # linee orizzontali
-TEXT_COL  = "#1E1E1E"   # testo
+# Colori e font
+PAGE_BG   = "#F7F5F2"
+HEADER_BG = "#EFECE6"
+ROW_EVEN  = "#FBFAF7"
+GRID_COL  = "#C6C6C6"
+TEXT_COL  = "#1E1E1E"
 
-# ============== FONT & CSS GLOBALI (usa i .ttf locali) ==============
-# 1) Prova a registrare i TTF per Matplotlib e scopri il "family name" reale
-font_dir = os.path.join(os.path.dirname(__file__), "fonts")
-ttf_candidates = [
-    # nomi “semplici”
-    "Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-Bold.ttf",
-    # nomi Google static “18pt”
-    "Inter_18pt-Regular.ttf", "Inter_18pt-Medium.ttf", "Inter_18pt-Bold.ttf",
-]
+# Limiti tabella per evitare immagini enormi
+MAX_ROWS_DISPLAY = 80
+FIG_MAX_W_IN     = 18
+FIG_MAX_H_IN     = 10
+FIG_DPI          = 110
 
-found_ttf = []
-for fname in ttf_candidates:
-    fpath = os.path.join(font_dir, fname)
-    if os.path.exists(fpath):
-        try:
-            fm.fontManager.addfont(fpath)
-            found_ttf.append(fpath)
-        except Exception:
-            pass
-
-mpl_family = None
-for fpath in found_ttf:
-    try:
-        fam = fm.FontProperties(fname=fpath).get_name()
-        if fam:
-            mpl_family = fam
-            break
-    except Exception:
-        pass
-
-if mpl_family:
-    matplotlib.rcParams["font.family"] = mpl_family
-else:
-    matplotlib.rcParams["font.family"] = "DejaVu Sans"
-
-matplotlib.rcParams.update({
-    "figure.facecolor": PAGE_BG,
-    "axes.facecolor": PAGE_BG,
-})
-
-# 2) Inietta @font-face in CSS (base64) così TUTTA la pagina usa Inter, se presente
-def _read_bytes(p):
-    with open(p, "rb") as f:
-        return f.read()
-
-css_faces = []
-css_plan = [
-    (("Inter-Regular.ttf","Inter_18pt-Regular.ttf"), 400, "normal"),
-    (("Inter-Medium.ttf","Inter_18pt-Medium.ttf"),   500, "normal"),
-    (("Inter-Bold.ttf","Inter_18pt-Bold.ttf"),       700, "normal"),
-]
-for names, weight, style in css_plan:
-    real = None
-    for n in names:
-        p = os.path.join(font_dir, n)
-        if os.path.exists(p):
-            real = p
-            break
-    if not real:
-        continue
-    raw = _read_bytes(real)
-    uri = "data:font/ttf;base64," + b64encode(raw).decode("ascii")
-    css_faces.append(
-        f"""@font-face {{
-              font-family: 'Inter';
-              src: url('{uri}') format('truetype');
-              font-weight: {weight};
-              font-style: {style};
-              font-display: swap;
-           }}"""
-    )
-
+# CSS globale (pagina intera + font)
 st.markdown(
     f"""
     <style>
-    {'\n'.join(css_faces)}
     html, body, [class*="stApp"] {{
         background-color: {PAGE_BG};
         color: {TEXT_COL};
-        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
     }}
-    .block-container {{
-        max-width: 1600px;
-        padding-top: 0.75rem;
-        padding-bottom: 1rem;
-    }}
-    /* Titoli più compatti */
-    h1, h2, h3, h4 {{
-        margin-top: 0.2rem;
-        margin-bottom: 0.6rem;
-        font-weight: 600;
-    }}
-    .small-note {{
-        font-size: 0.92rem;
-        opacity: 0.85;
-        margin-bottom: 0.35rem;
-    }}
+    .block-container {{ max-width: 1600px; padding-top: 1rem; }}
     </style>
     """,
     unsafe_allow_html=True
@@ -131,22 +48,37 @@ st.markdown(
 
 st.title("Trend Deep-Dive")
 
-# ============== SPLIT DATE (URL -> config.yaml -> default) ==============
+# ============== FONT MATPLOTLIB ==============
+try:
+    font_dir = os.path.join(os.path.dirname(__file__), "fonts")
+    any_added = False
+    for fname in ["Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-Bold.ttf"]:
+        fpath = os.path.join(font_dir, fname)
+        if os.path.exists(fpath):
+            fm.fontManager.addfont(fpath)
+            any_added = True
+    matplotlib.rcParams["font.family"] = "Inter" if any_added else "DejaVu Sans"
+except Exception:
+    matplotlib.rcParams["font.family"] = "DejaVu Sans"
+
+matplotlib.rcParams.update({
+    "figure.facecolor": PAGE_BG,
+    "axes.facecolor": PAGE_BG,
+})
+
+# ============== SPLIT DATE ==============
 def _parse_split(val):
     if val is None:
         return None
     s = str(val).strip()
-    # accetta sia YYYY-MM-DD che dd/mm/YYYY
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
         return pd.to_datetime(s).normalize()
     return pd.to_datetime(s, dayfirst=True, errors="coerce").normalize()
 
 def load_split_date():
-    # 1) Query param ?split=YYYY-MM-DD (o dd/mm/yyyy)
     dt = _parse_split(st.query_params.get("split"))
     if dt is not None:
         return dt
-    # 2) config.yaml accanto al file
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     try:
         import yaml
@@ -158,25 +90,20 @@ def load_split_date():
                     return dt
     except Exception:
         pass
-    # 3) default
     return pd.Timestamp(2022, 8, 1)
 
 SPLIT_DATE = load_split_date()
 
-# ============== PARAMETRI URL (trend) ==============
+# ============== PARAMETRI URL ==============
 trend = st.query_params.get("trend")
 if not trend:
     st.warning("⚠️ Nessun trend passato nell’URL. Usa ?trend=CODICE_TREND.")
     st.stop()
 
-base_trend = trend[:-1]  # parquet è senza l'ultima cifra
+base_trend = trend[:-1]
+st.caption(f"Trend selezionato: **{trend}** • Split date: **{SPLIT_DATE.date()}**")
 
-st.markdown(
-    f'<div class="small-note">Trend selezionato: <b>{trend}</b> • Split date: <b>{SPLIT_DATE.date()}</b></div>',
-    unsafe_allow_html=True
-)
-
-# ============== GOOGLE DRIVE (service account) ==============
+# ============== GOOGLE DRIVE ==============
 try:
     creds = service_account.Credentials.from_service_account_info(
         st.secrets["google_service_account"],
@@ -209,10 +136,9 @@ buf.seek(0)
 
 df = pd.read_parquet(buf)
 
-# ============== DATE/TIME + FILTRO ==============
-date_str = df.get("Date", pd.Series("", index=df.index)).astype(str).fillna("")
-time_str = df.get("Time", pd.Series("", index=df.index)).astype(str).fillna("")
-# dayfirst=True per i tuoi formati
+# ============== PREPARA DATI ==============
+date_str = df.get("Date", pd.Series("", index=df.index)).astype(str)
+time_str = df.get("Time", pd.Series("", index=df.index)).astype(str)
 dt = pd.to_datetime((date_str + " " + time_str).str.strip(), dayfirst=True, errors="coerce")
 df["__dt__"] = dt
 df["__date__"] = df["__dt__"].dt.normalize()
@@ -222,7 +148,6 @@ if df.empty:
     st.info("Nessun evento dopo la split_date.")
     st.stop()
 
-# ============== PREPARA TABELLA (NO HTML) ==============
 wanted = [
     "Date","Time","HomeTeam","AwayTeam","FAV_odds","P>2.5",
     "FAV_goal","SFAV_goal","FAV_goal_1T","SFAV_goal_1T",
@@ -230,40 +155,31 @@ wanted = [
 ]
 cols = [c for c in wanted if c in df.columns]
 tbl = df[cols].copy()
-
-# Data in dd/mm/YYYY
 tbl["Date"] = df["__date__"].dt.strftime("%d/%m/%Y")
 
-# Percentuali (se 0..1)
 for c in ["p_t","mu_t","P>2.5"]:
     if c in tbl.columns:
-        v = pd.to_numeric(tbl[c], errors="ignore")
-        try:
-            vnum = pd.to_numeric(v, errors="coerce")
-            if vnum.dropna().between(0, 1).all():
-                tbl[c] = (vnum * 100).round(1).astype(str) + "%"
-        except Exception:
-            pass
+        v = pd.to_numeric(tbl[c], errors="coerce")
+        if v.dropna().between(0,1).all():
+            tbl[c] = (v*100).round(1).astype(str) + "%"
 
-# Quote/NetProfit -> 2 decimali
 for c in ["FAV_odds","Odds1","Odds2","NetProfit1","NetProfit2"]:
     if c in tbl.columns:
         tbl[c] = pd.to_numeric(tbl[c], errors="coerce").round(2)
 
 tbl = tbl.fillna("")
 
-# ============== TABELLA MATPLOTLIB (solo orizzontali) ==============
-def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = 150):
+# ============== TABELLA MATPLOTLIB ==============
+def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = MAX_ROWS_DISPLAY):
     data = dataframe.head(max_rows)
     ncol, nrow = data.shape[1], data.shape[0]
 
-    # dimensioni dinamiche (Streamlit farà stretch)
-    fig_w = min(24, 6 + 0.9 * ncol)
-    base_row_h = 0.30   # altezza righe contenuto
-    header_h   = 0.34   # header leggermente più alto ma non “gonfio”
-    fig_h = min(30, 0.6 + header_h + base_row_h * nrow)
+    fig_w = min(FIG_MAX_W_IN, 6 + 0.7 * ncol)
+    base_row_h = 0.28
+    header_h   = base_row_h * 1.1
+    fig_h = min(FIG_MAX_H_IN, 1.0 + header_h + base_row_h * nrow)
 
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=150)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=FIG_DPI)
     fig.patch.set_facecolor(PAGE_BG)
     ax.set_facecolor(PAGE_BG)
     ax.axis("off")
@@ -282,11 +198,6 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = 150):
     table.auto_set_font_size(False)
     table.set_fontsize(9)
 
-    # larghezze automatiche
-    for i in range(ncol):
-        table.auto_set_column_width(i)
-
-    # raccolta Y per le linee orizzontali, allineamenti e zebra rows
     y_under_header = None
     body_y = []
     numeric_cols = {
@@ -295,47 +206,35 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = 150):
     }
 
     for (row, col), cell in table.get_celld().items():
-        # Niente bordi: così eliminiamo i verticali
         cell.set_linewidth(0.0)
-
         if row == 0:
-            cell.set_height(header_h)
             cell.get_text().set_color(TEXT_COL)
             cell.get_text().set_fontweight('bold')
             y_under_header = cell.xy[1]
         else:
-            cell.set_height(base_row_h)
             if row % 2 == 0:
                 cell.set_facecolor(ROW_EVEN)
             if col == 0:
                 body_y.append(cell.xy[1])
+        if col_labels[col] in numeric_cols:
+            cell._text.set_ha('right')
 
-        # numerici allineati a destra
-        try:
-            if col_labels[col] in numeric_cols:
-                cell._text.set_ha('right')
-        except Exception:
-            pass
-
-    # linee orizzontali: header solida, corpo tratteggiato (tipo sonofacorner)
     try:
         if y_under_header is not None:
-            ax.hlines(y_under_header, xmin=0, xmax=1, colors=GRID_COL, linewidth=1.0, linestyles='solid')
+            ax.hlines(y_under_header, xmin=0, xmax=1, colors=GRID_COL, linewidth=1.0)
         for y in sorted(set(body_y), reverse=True):
             ax.hlines(y, xmin=0, xmax=1, colors=GRID_COL, linewidth=0.8, linestyles=(0,(3,3)))
     except Exception:
         pass
 
-    # compattazione margini
-    plt.tight_layout()
+    fig.tight_layout()
     return fig
 
 st.subheader("Partite (dopo split_date)")
 fig_table = draw_mpl_table(tbl)
-# nuovo parametro Streamlit >=1.50: width='stretch' (deprecato use_container_width)
-st.pyplot(fig_table, width='stretch')
+st.pyplot(fig_table, width='content')
 
-# ============== NETPROFIT CUMULATO (interattivo) ==============
+# ============== NETPROFIT CUMULATO ==============
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
 np2 = pd.to_numeric(df.get("NetProfit2", 0), errors="coerce").fillna(0.0)
 
