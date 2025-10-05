@@ -4,3 +4,4 @@ pyarrow
 google-auth
 google-api-python-client
 pyyaml
+matplotlib
