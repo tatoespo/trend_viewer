@@ -1,5 +1,106 @@
 # trend_viewer.py
 
+# ============== FONT & CSS GLOBALI (usa i .ttf locali) ==============
+from base64 import b64encode
+
+PAGE_BG   = "#F7F5F2"   # beige chiaro
+HEADER_BG = "#EFECE6"
+ROW_EVEN  = "#FBFAF7"
+GRID_COL  = "#C6C6C6"
+TEXT_COL  = "#1E1E1E"
+
+# 1) registra i TTF per Matplotlib e scopri il "family name" reale
+font_dir = os.path.join(os.path.dirname(__file__), "fonts")
+ttf_candidates = [
+    "Inter-Regular.ttf",  # se hai rinominato i file così
+    "Inter-Medium.ttf",
+    "Inter-Bold.ttf",
+    # nomi alternativi (se non hai .ttf con i nomi sopra, lasciali pure)
+    "Inter_18pt-Regular.ttf",
+    "Inter_18pt-Medium.ttf",
+    "Inter_18pt-Bold.ttf",
+]
+
+found_ttf = []
+for fname in ttf_candidates:
+    fpath = os.path.join(font_dir, fname)
+    if os.path.exists(fpath):
+        try:
+            fm.fontManager.addfont(fpath)
+            found_ttf.append(fpath)
+        except Exception:
+            pass
+
+# family name da usare in Matplotlib (leggo da un .ttf reale)
+mpl_family = None
+for fpath in found_ttf:
+    try:
+        fam = fm.FontProperties(fname=fpath).get_name()
+        if fam:  # prendo il primo valido
+            mpl_family = fam
+            break
+    except Exception:
+        pass
+
+if mpl_family:
+    matplotlib.rcParams["font.family"] = mpl_family
+else:
+    matplotlib.rcParams["font.family"] = "DejaVu Sans"
+
+matplotlib.rcParams.update({
+    "figure.facecolor": PAGE_BG,
+    "axes.facecolor": PAGE_BG,
+})
+
+# 2) inietto @font-face in CSS (base64) così TUTTA la pagina usa Inter
+def _read_bytes(p):
+    with open(p, "rb") as f:
+        return f.read()
+
+css_faces = []
+# mappa: (path parziale da trovare, peso CSS, stile)
+css_plan = [
+    (("Inter-Regular.ttf","Inter_18pt-Regular.ttf"), 400, "normal"),
+    (("Inter-Medium.ttf","Inter_18pt-Medium.ttf"),   500, "normal"),
+    (("Inter-Bold.ttf","Inter_18pt-Bold.ttf"),       700, "normal"),
+]
+
+for names, weight, style in css_plan:
+    real = None
+    for n in names:
+        p = os.path.join(font_dir, n)
+        if os.path.exists(p):
+            real = p
+            break
+    if not real:
+        continue
+    raw = _read_bytes(real)
+    uri = "data:font/ttf;base64," + b64encode(raw).decode("ascii")
+    css_faces.append(
+        f"""@font-face {{
+              font-family: 'Inter';
+              src: url('{uri}') format('truetype');
+              font-weight: {weight};
+              font-style: {style};
+              font-display: swap;
+           }}"""
+    )
+
+st.markdown(
+    f"""
+    <style>
+    {'\n'.join(css_faces)}
+    html, body, [class*="stApp"] {{
+        background-color: {PAGE_BG};
+        color: {TEXT_COL};
+        font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, sans-serif;
+    }}
+    .block-container {{ max-width: 1600px; padding-top: 1rem; }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 import os
 import io
 import re
