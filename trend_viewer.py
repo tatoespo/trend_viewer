@@ -3,65 +3,53 @@ import io
 import re
 import pandas as pd
 import streamlit as st
+import altair as alt
 
 # Google Drive API
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# Matplotlib
-import matplotlib
-import matplotlib.pyplot as plt
-from cycler import cycler
-
 # ============== CONFIG GENERALE ==============
 st.set_page_config(page_title="Trend Deep-Dive", layout="wide")
 
-# --- Colori UI/Tabella ---
-PAGE_BG   = "#EFE9E6"   # richiesta: figure/axes facecolor = efe9e6
-HEADER_BG = "#E7E1DC"
-ROW_EVEN  = "#F7F2EF"
-GRID_COL  = "#C9C3BE"
+# --- Colori e stile richiesti ---
+PAGE_BG   = "#EFE9E6"     # sfondo pagina e grafici
 TEXT_COL  = "#1E1E1E"
+LINE_COLS = ["#287271", "#495371"]  # serie 1 e 2
 
-# Limiti tabella per evitare immagini enormi
-MAX_ROWS_DISPLAY = 80
-FIG_MAX_W_IN     = 18
-FIG_MAX_H_IN     = 10
-FIG_DPI          = 110
-
-# ---------- CSS globale (allineamento e spaziature) ----------
+# ---------- CSS: sfondo, allineamento ai margini, tabella leggibile ----------
 st.markdown(
     f"""
     <style>
-    /* colore di sfondo coerente con i plot */
     html, body, [class*="stApp"] {{
         background-color: {PAGE_BG};
         color: {TEXT_COL};
     }}
 
-    /* contenitore centrale più largo e con padding sinistro ridotto */
     .block-container {{
         max-width: 1600px;
         padding-top: 0.6rem;
-        padding-left: 1.0rem; /* allinea meglio i contenuti a sinistra */
+        padding-left: 1.0rem;   /* margine sinistro omogeneo */
         padding-right: 1.0rem;
     }}
 
-    /* compattiamo i titoli */
     h1, h2, h3 {{
         margin-top: 0.2rem;
         margin-bottom: 0.5rem;
     }}
 
-    /* avvicina la figura Matplotlib al sottotitolo */
-    div[data-testid="stPyplot"] {{
-        margin-top: -8px;
+    /* Tabella nativa: font più grande e righe più alte */
+    div[data-testid="stDataFrame"] table {{
+        font-size: 16px !important;        /* testi più grandi */
+    }}
+    div[data-testid="stDataFrame"] tbody tr {{
+        height: 36px !important;           /* righe più alte */
     }}
 
-    /* assicura che l'immagine della figura non sia centrata ma "a filo" a sinistra */
-    div[data-testid="stPyplot"] img {{
-        display: block;
+    /* Assicura che gli elementi grafici siano allineati a sinistra */
+    div[data-testid="stVegaLiteChart"] > div, 
+    div[data-testid="stDataFrame"] {{
         margin-left: 0 !important;
     }}
     </style>
@@ -71,26 +59,12 @@ st.markdown(
 
 st.title("Trend Deep-Dive")
 
-# ============== STILE MATPLOTLIB (RICHIESTO) ==============
-matplotlib.rcParams.update({
-    "figure.facecolor": "#efe9e6",
-    "axes.facecolor":   "#efe9e6",
-    "axes.prop_cycle":  cycler(color=["#287271", "#495371"]),
-    "axes.spines.top":  False,
-    "axes.spines.right": False,
-    # dettagli utili (opzionali) per più pulizia
-    "axes.grid": True,
-    "grid.color": "#d7d2cd",
-    "grid.linewidth": 0.6,
-    "grid.alpha": 0.7,
-})
-
 # ============== SPLIT DATE ==============
 def _parse_split(val):
     if val is None:
         return None
     s = str(val).strip()
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):           # ISO: niente warning
         return pd.to_datetime(s, format="%Y-%m-%d", errors="coerce").normalize()
     return pd.to_datetime(s, dayfirst=True, errors="coerce").normalize()
 
@@ -176,6 +150,7 @@ cols = [c for c in wanted if c in df.columns]
 tbl = df[cols].copy()
 tbl["Date"] = df["__date__"].dt.strftime("%d/%m/%Y")
 
+# formattazioni percentuali/decimali
 for c in ["p_t","mu_t","P>2.5"]:
     if c in tbl.columns:
         v = pd.to_numeric(tbl[c], errors="coerce")
@@ -188,85 +163,15 @@ for c in ["FAV_odds","Odds1","Odds2","NetProfit1","NetProfit2"]:
 
 tbl = tbl.fillna("")
 
-# ============== TABELLA MATPLOTLIB ==============
-def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = MAX_ROWS_DISPLAY):
-    """
-    Tabella leggibile e allineata: font più grande, righe più alte,
-    header bold, zebra rows e linee guida leggere.
-    """
-    data = dataframe.head(max_rows)
-    ncol, nrow = data.shape[1], data.shape[0]
-
-    # dimensioni figura calibrate su righe alte
-    base_row_h = 0.40   # (più alte) prima 0.28
-    header_h   = base_row_h * 1.30
-    fig_w = min(FIG_MAX_W_IN, 6 + 0.74 * ncol)
-    fig_h = min(FIG_MAX_H_IN, 0.7 + header_h + base_row_h * nrow)
-
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=FIG_DPI)
-    fig.patch.set_facecolor(PAGE_BG)
-    ax.set_facecolor(PAGE_BG)
-    ax.axis("off")
-
-    cell_text = data.astype(str).values.tolist()
-    col_labels = list(data.columns)
-
-    table = ax.table(
-        cellText=cell_text,
-        colLabels=col_labels,
-        cellLoc='center',
-        colLoc='center',
-        loc='upper left',
-        colColours=[HEADER_BG]*ncol
-    )
-
-    # font più grande + più spazio verticale tra le righe
-    table.auto_set_font_size(False)
-    table.set_fontsize(12)   # caratteri più grandi
-    table.scale(1.0, 1.30)   # righe più alte
-
-    y_under_header = None
-    body_y = []
-    numeric_cols = {
-        "FAV_odds","P>2.5","FAV_goal","SFAV_goal","FAV_goal_1T","SFAV_goal_1T",
-        "p_t","mu_t","Bet1","Odds1","NetProfit1","Bet2","Odds2","NetProfit2"
-    }
-
-    for (row, col), cell in table.get_celld().items():
-        # togli i bordi neri default per look più pulito
-        cell.set_linewidth(0.0)
-        if row == 0:  # header
-            cell.get_text().set_color(TEXT_COL)
-            cell.get_text().set_fontweight('bold')
-            y_under_header = cell.xy[1]
-        else:
-            # zebra
-            if row % 2 == 0:
-                cell.set_facecolor(ROW_EVEN)
-            if col == 0:
-                body_y.append(cell.xy[1])
-        # numerici allineati a destra
-        if col < len(col_labels) and col_labels[col] in numeric_cols:
-            cell._text.set_ha('right')
-
-    # linee guida orizzontali molto leggere
-    try:
-        if y_under_header is not None:
-            ax.hlines(y_under_header, xmin=0, xmax=1, colors=GRID_COL, linewidth=1.0)
-        for y in sorted(set(body_y), reverse=True):
-            ax.hlines(y, xmin=0, xmax=1, colors=GRID_COL, linewidth=0.7, linestyles=(0,(3,3)))
-    except Exception:
-        pass
-
-    fig.tight_layout()
-    return fig
-
+# ============== TABELLA NATIVA STREAMLIT ==============
 st.subheader("Partite (dopo split_date)")
-fig_table = draw_mpl_table(tbl)
-# usa tutta la larghezza della colonna e resta a sinistra
-st.pyplot(fig_table, use_container_width=True)
+st.dataframe(
+    tbl,
+    use_container_width=True,
+    hide_index=True
+)
 
-# ============== NETPROFIT CUMULATO ==============
+# ============== NETPROFIT CUMULATO (ALTAIR, STESSO SFONDO) ==============
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
 np2 = pd.to_numeric(df.get("NetProfit2", 0), errors="coerce").fillna(0.0)
 
@@ -278,8 +183,38 @@ by_day = (
 by_day["Cum_NetProfit1"] = by_day["NetProfit1"].cumsum()
 by_day["Cum_NetProfit2"] = by_day["NetProfit2"].cumsum()
 
+# dati in formato "long" per Altair
+chart_df = by_day.melt(
+    id_vars="Date",
+    value_vars=["Cum_NetProfit1", "Cum_NetProfit2"],
+    var_name="Serie",
+    value_name="Valore"
+)
+
+color_scale = alt.Scale(
+    domain=["Cum_NetProfit1", "Cum_NetProfit2"],
+    range=LINE_COLS
+)
+
+base = alt.Chart(chart_df).encode(
+    x=alt.X("Date:T", axis=alt.Axis(title=None, labelColor=TEXT_COL, tickColor=TEXT_COL, domainColor=TEXT_COL)),
+    y=alt.Y("Valore:Q", axis=alt.Axis(title=None, labelColor=TEXT_COL, tickColor=TEXT_COL, domainColor=TEXT_COL)),
+    color=alt.Color("Serie:N", scale=color_scale, legend=alt.Legend(title=None, labelColor=TEXT_COL))
+)
+
+line = base.mark_line().properties(
+    width="container",
+    height=360,
+    background=PAGE_BG
+).configure_view(
+    strokeWidth=0,   # senza bordo esterno
+).configure_axis(
+    grid=True,
+    gridColor="#d7d2cd",
+    gridOpacity=0.7
+)
+
 st.subheader("NetProfit cumulato")
-st.line_chart(
-    by_day.set_index("Date")[["Cum_NetProfit1","Cum_NetProfit2"]],
-    use_container_width=True
+st.altair_chart(line, use_container_width=True)
+
 )
