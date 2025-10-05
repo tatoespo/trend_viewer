@@ -1,7 +1,8 @@
-streamlit
-pandas
-pyarrow
-google-auth
-google-api-python-client
-pyyaml
-matplotlib
+streamlit==1.50.0
+pandas==2.3.3
+google-api-python-client==2.184.0
+google-auth==2.41.1
+google-auth-httplib2==0.2.0
+httplib2==0.22.0
+matplotlib==3.10.6
+pyarrow==21.0.0
