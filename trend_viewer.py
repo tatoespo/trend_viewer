@@ -352,7 +352,7 @@ def draw_mpl_table(dataframe: pd.DataFrame, max_rows: int = 150):
 
 st.subheader("Partite (dopo split_date)")
 fig_table = draw_mpl_table(tbl)
-st.pyplot(fig_table, width="stretch")  # nuovo parametro (sostituisce use_container_width)
+st.pyplot(fig_table, use_container_width=True) # nuovo parametro (sostituisce use_container_width)
 
 # ============== NETPROFIT CUMULATO (interattivo) ==============
 np1 = pd.to_numeric(df.get("NetProfit1", 0), errors="coerce").fillna(0.0)
